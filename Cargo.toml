@@ -1,29 +1,10 @@
-[package]
-name = "ddm"
-version = "0.1.0"
-edition = "2021"
-license = "MIT OR Apache-2.0"
-authors = ["DDM Contributors"]
-description = "DDM: high-throughput, robust segmented download manager for Debian 12."
+workspace = { members = ["crates/ddm-core", "crates/ddm-cli"] }
 
-[dependencies]
-anyhow = "1.0"
-thiserror = "1.0"
+[workspace]
+members = [
+    "crates/ddm-core",
+    "crates/ddm-cli",
+]
+resolver = "2"
 
-# CLI
-clap = { version = "4.5", features = ["derive"] }
-
-# Config & serialization
-serde = { version = "1.0", features = ["derive"] }
-toml = "0.8"
-
-# XDG paths for config/state (Debian-friendly)
-xdg = "2.5"
-
-# Logging
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
-
-[dev-dependencies]
-tokio = { version = "1.37", features = ["rt-multi-thread", "macros", "time"] }
 

@@ -1,0 +1,19 @@
+[package]
+name = "ddm-cli"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["DDM Contributors"]
+description = "Command-line interface for the DDM segmented download manager."
+
+[[bin]]
+name = "ddm"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+tracing = "0.1"
+
+ddm-core = { path = "../ddm-core" }
+
