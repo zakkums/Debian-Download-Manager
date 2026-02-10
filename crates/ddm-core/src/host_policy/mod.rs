@@ -9,11 +9,13 @@
 //! the CLI `run` loop and passed to the scheduler so multiple jobs in a single
 //! invocation can share observations.
 
+mod entry;
 mod key;
 mod state;
 
+pub use entry::{HostEntry, RangeSupport};
 pub use key::HostKey;
-pub use state::{HostEntry, HostPolicy, RangeSupport};
+pub use state::HostPolicy;
 
 #[cfg(test)]
 mod tests {

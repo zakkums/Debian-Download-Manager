@@ -1,65 +1,7 @@
 //! Classify HTTP status and curl errors into retry policy error kinds.
 
-use crate::retry::policy::{ErrorKind, RetryDecision, RetryPolicy};
-use std::fmt;
-
-/// Runs a closure until it succeeds or the retry policy says to stop.
-/// On retryable failure, sleeps for the backoff duration then tries again.
-pub fn run_with_retry<F>(policy: &RetryPolicy, mut f: F) -> Result<(), SegmentError>
-where
-    F: FnMut() -> Result<(), SegmentError>,
-{
-    let mut attempt = 1u32;
-    loop {
-        match f() {
-            Ok(()) => return Ok(()),
-            Err(e) => {
-                let kind = classify(&e);
-                match policy.decide(attempt, kind) {
-                    RetryDecision::NoRetry => return Err(e),
-                    RetryDecision::RetryAfter(d) => {
-                        std::thread::sleep(d);
-                        attempt += 1;
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Error returned by a single segment download (curl failure or HTTP error).
-/// Used so we can classify and decide retries before converting to anyhow.
-#[derive(Debug)]
-pub enum SegmentError {
-    /// Curl reported an error (timeout, connection, etc.).
-    Curl(curl::Error),
-    /// HTTP response had a non-2xx status.
-    Http(u32),
-    /// Transfer completed but fewer bytes were written than the segment length
-    /// (e.g. server closed early). Enables retry instead of silent corruption.
-    PartialTransfer { expected: u64, received: u64 },
-}
-
-impl fmt::Display for SegmentError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            SegmentError::Curl(e) => write!(f, "{}", e),
-            SegmentError::Http(code) => write!(f, "HTTP {}", code),
-            SegmentError::PartialTransfer { expected, received } => {
-                write!(f, "partial transfer: expected {} bytes, got {}", expected, received)
-            }
-        }
-    }
-}
-
-impl std::error::Error for SegmentError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            SegmentError::Curl(e) => Some(e),
-            SegmentError::Http(_) | SegmentError::PartialTransfer { .. } => None,
-        }
-    }
-}
+use super::error::SegmentError;
+use super::policy::ErrorKind;
 
 /// Classify an HTTP status code for retry decisions.
 pub fn classify_http_status(code: u32) -> ErrorKind {
@@ -91,12 +33,13 @@ pub fn classify_curl_error(e: &curl::Error) -> ErrorKind {
     ErrorKind::Other
 }
 
-/// Classify a segment error (curl or HTTP) into an ErrorKind.
+/// Classify a segment error (curl, HTTP, or storage) into an ErrorKind.
 pub fn classify(e: &SegmentError) -> ErrorKind {
     match e {
         SegmentError::Curl(ce) => classify_curl_error(ce),
         SegmentError::Http(code) => classify_http_status(*code),
         SegmentError::PartialTransfer { .. } => ErrorKind::Connection,
+        SegmentError::Storage(_) => ErrorKind::Other,
     }
 }
 
@@ -129,5 +72,14 @@ mod tests {
             received: 50,
         };
         assert_eq!(classify(&e), ErrorKind::Connection);
+    }
+
+    #[test]
+    fn storage_classified_as_other() {
+        let e = SegmentError::Storage(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "read-only filesystem",
+        ));
+        assert_eq!(classify(&e), ErrorKind::Other);
     }
 }

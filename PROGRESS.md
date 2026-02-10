@@ -15,6 +15,15 @@ Use this file to see what’s done and what’s left. When starting a new chat, 
 - **Downloader** – Worker pool bounded by `max_concurrent`, per-segment Range GETs, shared pwrite-style storage writer.
 - **Storage lifecycle** – `.part` temp file + atomic rename finalize.
 
+### Fix before continuing (blocker) — DONE
+
+**Blocker bug (fixed):** The segment integrity check was broken by a bug in `download_one_segment()`.
+
+- **Cause:** `Cell<u64>` is `Copy`/`Clone` by value, so `bytes_written.clone()` gave a **separate** cell; the write callback updated its copy but `received = bytes_written.get()` was read from the original (always 0).
+- **Fix applied:** Replaced with `Arc<AtomicU64>`; write callback uses `fetch_add` for offset and the post-perform check uses `load()`, so both share the same counter. Integrity check now works correctly.
+
+---
+
 ### Correctness & performance gaps (priority order)
 
 Work through these in order before adding new features.
@@ -37,6 +46,16 @@ Work through these in order before adding new features.
 6. **Job state recovery edge case** – If the process crashes while a job is “running”, it stays “running” in the DB and the scheduler only runs “queued” jobs, so the job can be stranded.  
    **Fix:** On startup (or before scheduling), normalize `running` → `queued` unless real “active worker” tracking is implemented.
 
+### Remaining high-value fixes (next priorities, after blocker)
+
+7. **Surface storage errors properly** – A disk write failure currently returns `Ok(0)` inside the curl write callback, which becomes a curl write error; the classifier maps it to **Connection**, so storage failures (disk full, permission denied) get retried as if they were connection issues.  
+   **Fix:** Stash the actual IO error from `write_at()` in a shared variable; when curl fails with a write error, return a dedicated `SegmentError::Storage(...)` and classify it as **Other** (no retry).
+
+8. **Make job failure state explicit** – `JobState::Error` exists, but `run_one_job()` doesn't set it on failure. A segment failure can leave the job "running" until the next `recover_running_jobs()` pass.  
+   **Fix:** On any download error, set state = `Error` (optionally store a `last_error` string later). Only `recover_running_jobs()` should convert `running` → `queued` (for crash recovery), not for normal failures.
+
+9. **Segment timeout is too rigid for large segments** – Per-segment `easy.timeout(300s)` can kill legitimate large transfers on slow links or when the host throttles. Prefer a **low-speed timeout** (abort only if throughput drops under X for Y seconds) rather than a hard wall-clock timeout.
+
 ### Hardware / tuning notes (Ryzen 7 3700X + NVMe)
 
 - Bottleneck is usually network/server throttling, not CPU/disk. Current approach (8–16 concurrent segments) is the right shape.
@@ -50,14 +69,22 @@ Work through these in order before adding new features.
 - `import-har` and `bench` are stubbed but unimplemented.
 - `host_policy` / `checksum` are placeholders (fine for now).
 
+### Current status (summary)
+
+- **Architecture:** Strong. Recent changes are in the right direction and mostly correct.
+- **Done:** bytes_written fix; segment integrity; abort on write fail; storage errors; job state set to Error on failure; low-speed timeout for segments. **Next:** Progress output (bytes done, ETA, rates).
+
 ### Recommended next steps (best ROI sequence)
 
-1. **Segment integrity check + abort-on-write-fail** – Prevents silent corruption and enables correct retry.
-2. **Durable progress commits** – Resume actually works under crashes.
-3. **Force-restart cleans temp file** – Predictable behavior when restarting.
-4. **`fallocate` on Linux** – Performance polish for preallocation.
-5. **Progress UI / stats** – So improvements can be measured.
-6. Only after the above: consider curl multi (threads are fine up to current segment counts).
+1. ~~**Fix bytes_written shared counter**~~ – Done.
+2. ~~**Segment integrity check + abort-on-write-fail**~~ – Done.
+3. ~~**Surface storage errors**~~ – Done; `SegmentError::Storage(io::Error)`, classify as Other.
+4. ~~**Set job state to Error on failure**~~ – Done.
+5. **Durable progress commits** – Resume actually works under crashes.
+6. **Force-restart cleans temp file** – Predictable behavior when restarting.
+7. **`fallocate` on Linux** – Performance polish for preallocation.
+8. **Progress UI / stats** – So improvements can be measured.
+9. Only after the above: consider curl multi (threads are fine up to current segment counts).
 
 ---
 
@@ -87,12 +114,16 @@ Work through these in order before adding new features.
 - [x] **Safe resume (`safe_resume`)** – On start, re-validate ETag/Last-Modified and size; if changed, require explicit user override (`--force-restart`); else download only missing segments per bitmap. Module: `safe_resume/` with `validate.rs` (comparison logic) and `mod.rs`; `validate_for_resume(job, head)`; `ValidationError::RemoteChanged`. Scheduler `run_one_job` / `run_next_job`: probe → validate → update metadata if force or first run → open/create storage → download only incomplete segments → persist bitmap and finalize if done. CLI `run` with `--force-restart`; storage `open_existing` for resume. Unit tests for validation (no metadata OK, same OK, etag/size/last_modified changed Err).
 - [x] **Scheduler (`scheduler`)** – Coordinate jobs; respect per-host and global connection limits. `download_segments(..., max_concurrent: Option<usize>)` with worker-pool when set; scheduler passes `min(max_connections_per_host, max_total_connections, segment_count)`; `ddm run` processes all queued jobs in a loop (FIFO by job id). One job at a time, each job’s segments bounded by config.
 - [x] **Retry / backoff (`retry`)** – Error classification (timeouts, 429/503, connection resets); exponential backoff. `retry/`: policy (ErrorKind, RetryPolicy, RetryDecision); classify (SegmentError, classify_http_status, classify_curl_error, run_with_retry). Downloader uses SegmentError and run_with_retry per segment; scheduler passes RetryPolicy::default(). Tests: policy + classify. Per-host concurrency reduction deferred to host_policy.
-- [x] **Segment integrity** – After `transfer.perform()`, verify `bytes_written.get() == segment.len()`; on mismatch return `SegmentError::PartialTransfer { expected, received }` for retry. Prevents silent corruption.
+- [x] **Segment integrity** – After `transfer.perform()`, verify `bytes_written.load() == segment.len()`; on mismatch return `SegmentError::PartialTransfer { expected, received }` for retry. Uses `Arc<AtomicU64>` so the write callback and post-perform check share the same counter.
 - [x] **Abort on write failure** – In downloader `write_function`, return `Ok(0)` when `write_at` fails so libcurl aborts the transfer (segment fails and retries); no longer use `WriteError::Pause`. Retry classify: `PartialTransfer` and curl write errors map to `ErrorKind::Connection`.
 - [x] **Durable progress commits** – Bitmap persisted to SQLite as segments complete. `ResumeDb::update_bitmap(id, bitmap)`; downloader accepts optional `progress_tx: Option<&tokio::sync::mpsc::Sender<Vec<u8>>>` and sends bitmap after each completed segment; scheduler runs a receiver task that calls `update_bitmap` so a crash mid-download doesn’t lose progress.
 - [x] **Force-restart cleans temp file** – When `needs_metadata` (force-restart or remote changed), scheduler removes existing `.part` with `tokio::fs::remove_file` before creating storage; then create + preallocate so segment count/size changes don’t leave bad state.
 - [x] **Preallocate with fallocate** – On Unix, `StorageWriterBuilder::preallocate` tries `posix_fallocate` first (real block allocation); on failure or non-Unix falls back to `set_len`. `libc` under `[target.'cfg(unix)'.dependencies]`.
 - [x] **Job state recovery** – `ResumeDb::recover_running_jobs()` sets all `running` → `queued`; CLI `run` calls it before the scheduling loop so crashed jobs are not stranded. Unit test `recover_running_jobs_resets_to_queued`.
+- [x] **Fix bytes_written shared counter (blocker)** – In `download_one_segment()` replaced `Cell<u64>` with `Arc<AtomicU64>`; write callback uses `fetch_add` for offset, post-perform uses `load()`. Segment integrity check now works correctly.
+- [x] **Surface storage errors** – Write callback stashes IO error from `write_at()` in `Arc<Mutex<Option<io::Error>>>`; when `perform()` fails with curl write error, return `SegmentError::Storage(io_err)`. Classify `Storage` as `ErrorKind::Other` (no retry). Unit test `storage_classified_as_other`.
+- [x] **Set job state to Error on failure** – In `run_one_job()`, after setting state to `Running`, the rest of the run is wrapped in an async block whose result is checked; on any error we call `db.set_state(job_id, JobState::Error).await` (best-effort) then propagate. Only `recover_running_jobs()` converts `running` → `queued` (crash recovery).
+- [x] **Low-speed timeout for segments** – Per-segment transfer uses curl `low_speed_limit(1024)` and `low_speed_time(60s)`: abort only if throughput drops below 1 KiB/s for 60s. Hard wall-clock timeout relaxed to 3600s as a safety net so large segments on slow links are not killed by a rigid 300s limit.
 
 ---
 
@@ -105,6 +136,8 @@ Work through these in order before adding new features.
 ## Not started (order = ROI sequence above; do correctness items first)
 
 ### Correctness & robustness (do first)
+
+- (none; next is progress/tuning)
 
 ### Progress and tuning
 

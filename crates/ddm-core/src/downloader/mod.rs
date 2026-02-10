@@ -5,16 +5,16 @@
 //! offset and updates the completion bitmap. Supports retry with backoff via
 //! optional `RetryPolicy`.
 
+mod segment;
+
 use anyhow::{Context, Result};
-use crate::retry::{classify, run_with_retry, ErrorKind, SegmentError, RetryPolicy};
+use crate::retry::{classify, run_with_retry, ErrorKind, RetryPolicy, SegmentError};
 use crate::segmenter::{Segment, SegmentBitmap};
 use crate::storage::StorageWriter;
-use std::cell::Cell;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 /// Result of a single segment download (used for retry classification).
 pub type SegmentResult = Result<(), SegmentError>;
@@ -24,70 +24,6 @@ pub type SegmentResult = Result<(), SegmentError>;
 pub struct DownloadSummary {
     pub throttle_events: u32,
     pub error_events: u32,
-}
-
-/// Downloads a single segment: GET with Range header, write body to storage at segment offset.
-/// Returns `SegmentError` so callers can classify and retry with backoff.
-fn download_one_segment(
-    url: &str,
-    custom_headers: &HashMap<String, String>,
-    segment: &Segment,
-    storage: &StorageWriter,
-) -> SegmentResult {
-    let bytes_written = Cell::new(0u64);
-    let bytes_written_in_cb = bytes_written.clone();
-    let segment_start = segment.start;
-    let storage = storage.clone();
-
-    let mut easy = curl::easy::Easy::new();
-    easy.url(url).map_err(SegmentError::Curl)?;
-    easy.follow_location(true).map_err(SegmentError::Curl)?;
-    easy.connect_timeout(Duration::from_secs(30))
-        .map_err(SegmentError::Curl)?;
-    easy.timeout(Duration::from_secs(300))
-        .map_err(SegmentError::Curl)?;
-
-    let range_str = format!("{}-{}", segment.start, segment.end.saturating_sub(1));
-    easy.range(&range_str).map_err(SegmentError::Curl)?;
-
-    let mut list = curl::easy::List::new();
-    for (k, v) in custom_headers {
-        list.append(&format!("{}: {}", k.trim(), v.trim()))
-            .map_err(SegmentError::Curl)?;
-    }
-    if !custom_headers.is_empty() {
-        easy.http_headers(list).map_err(SegmentError::Curl)?;
-    }
-
-    {
-        let mut transfer = easy.transfer();
-        transfer
-            .write_function(move |data| {
-                let off = bytes_written_in_cb.get();
-                match storage.write_at(segment_start + off, data) {
-                    Ok(()) => {
-                        bytes_written_in_cb.set(off + data.len() as u64);
-                        Ok(data.len())
-                    }
-                    Err(_) => Ok(0),
-                }
-            })
-            .map_err(SegmentError::Curl)?;
-        transfer.perform().map_err(SegmentError::Curl)?;
-    }
-
-    let code = easy.response_code().map_err(SegmentError::Curl)? as u32;
-    if code < 200 || code >= 300 {
-        return Err(SegmentError::Http(code));
-    }
-
-    let received = bytes_written.get();
-    let expected = segment.len();
-    if received != expected {
-        return Err(SegmentError::PartialTransfer { expected, received });
-    }
-
-    Ok(())
 }
 
 /// Downloads all segments that are not yet completed, writing to `storage` and updating `bitmap`.
@@ -146,8 +82,8 @@ pub fn download_segments(
                         None => break,
                     };
                     let res: SegmentResult = match policy {
-                        Some(p) => run_with_retry(&p, || download_one_segment(&u, &h, &segment, &st)),
-                        None => download_one_segment(&u, &h, &segment, &st),
+                        Some(p) => run_with_retry(&p, || segment::download_one_segment(&u, &h, &segment, &st)),
+                        None => segment::download_one_segment(&u, &h, &segment, &st),
                     };
                     let _ = tx.send((index, res));
                 }
@@ -173,8 +109,8 @@ pub fn download_segments(
                 let policy = retry_policy.copied();
                 let res = std::thread::spawn(move || {
                     match policy {
-                        Some(p) => run_with_retry(&p, || download_one_segment(&u, &h, &segment, &st)),
-                        None => download_one_segment(&u, &h, &segment, &st),
+                        Some(p) => run_with_retry(&p, || segment::download_one_segment(&u, &h, &segment, &st)),
+                        None => segment::download_one_segment(&u, &h, &segment, &st),
                     }
                 })
                 .join()
