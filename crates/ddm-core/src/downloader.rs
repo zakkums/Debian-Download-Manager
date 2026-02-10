@@ -35,6 +35,7 @@ fn download_one_segment(
     storage: &StorageWriter,
 ) -> SegmentResult {
     let bytes_written = Cell::new(0u64);
+    let bytes_written_in_cb = bytes_written.clone();
     let segment_start = segment.start;
     let storage = storage.clone();
 
@@ -62,12 +63,14 @@ fn download_one_segment(
         let mut transfer = easy.transfer();
         transfer
             .write_function(move |data| {
-                let off = bytes_written.get();
-                storage
-                    .write_at(segment_start + off, data)
-                    .map_err(|_| curl::easy::WriteError::Pause)?;
-                bytes_written.set(off + data.len() as u64);
-                Ok(data.len())
+                let off = bytes_written_in_cb.get();
+                match storage.write_at(segment_start + off, data) {
+                    Ok(()) => {
+                        bytes_written_in_cb.set(off + data.len() as u64);
+                        Ok(data.len())
+                    }
+                    Err(_) => Ok(0),
+                }
             })
             .map_err(SegmentError::Curl)?;
         transfer.perform().map_err(SegmentError::Curl)?;
@@ -76,6 +79,12 @@ fn download_one_segment(
     let code = easy.response_code().map_err(SegmentError::Curl)? as u32;
     if code < 200 || code >= 300 {
         return Err(SegmentError::Http(code));
+    }
+
+    let received = bytes_written.get();
+    let expected = segment.len();
+    if received != expected {
+        return Err(SegmentError::PartialTransfer { expected, received });
     }
 
     Ok(())
@@ -87,6 +96,8 @@ fn download_one_segment(
 /// When `retry_policy` is `Some`, each segment is retried with exponential backoff on
 /// timeouts, connection errors, and 429/503/5xx.
 /// Fills `summary_out` with throttle/error counts (even on failure) for adaptive policy.
+/// If `progress_tx` is `Some`, the current bitmap is sent after each completed segment
+/// so the caller can persist progress (e.g. to SQLite) for crash recovery.
 pub fn download_segments(
     url: &str,
     custom_headers: &HashMap<String, String>,
@@ -96,6 +107,7 @@ pub fn download_segments(
     max_concurrent: Option<usize>,
     retry_policy: Option<&RetryPolicy>,
     summary_out: &mut DownloadSummary,
+    progress_tx: Option<&tokio::sync::mpsc::Sender<Vec<u8>>>,
 ) -> Result<()> {
     let incomplete: Vec<(usize, Segment)> = segments
         .iter()
@@ -172,10 +184,14 @@ pub fn download_segments(
             .collect()
     };
 
+    let segment_count = segments.len();
     for (index, res) in results {
         match res {
             Ok(()) => {
                 bitmap.set_completed(index);
+                if let Some(tx) = progress_tx {
+                    let _ = tx.try_send(bitmap.to_bytes(segment_count));
+                }
             }
             Err(e) => {
                 let kind = classify(&e);

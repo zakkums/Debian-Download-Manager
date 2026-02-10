@@ -87,6 +87,10 @@ impl CliCommand {
             }
             CliCommand::Run { force_restart } => {
                 let download_dir = std::env::current_dir()?;
+                let recovered = db.recover_running_jobs().await?;
+                if recovered > 0 {
+                    tracing::info!("recovered {} job(s) from previous run", recovered);
+                }
                 let mut run_count = 0u32;
                 let mut host_policy = HostPolicy::new(cfg.min_segments, cfg.max_segments);
                 while scheduler::run_next_job(

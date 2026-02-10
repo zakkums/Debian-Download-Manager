@@ -222,6 +222,45 @@ impl ResumeDb {
         Ok(())
     }
 
+    /// Update only the completed-segment bitmap (and updated_at).
+    /// Used for durable progress: persist bitmap as segments complete so a crash doesn't lose progress.
+    pub async fn update_bitmap(&self, id: JobId, bitmap: &[u8]) -> Result<()> {
+        let now = unix_timestamp();
+        sqlx::query(
+            r#"
+            UPDATE jobs
+            SET completed_bitmap = ?1,
+                updated_at = ?2
+            WHERE id = ?3
+            "#,
+        )
+        .bind(bitmap)
+        .bind(now)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Normalize any job left in `running` to `queued` (e.g. after a crash).
+    /// Call before scheduling so stranded jobs are picked up again.
+    /// Returns the number of jobs reset.
+    pub async fn recover_running_jobs(&self) -> Result<u64> {
+        let now = unix_timestamp();
+        let r = sqlx::query(
+            r#"
+            UPDATE jobs
+            SET state = 'queued',
+                updated_at = ?1
+            WHERE state = 'running'
+            "#,
+        )
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(r.rows_affected())
+    }
+
     /// Update the state of an existing job.
     pub async fn set_state(&self, id: JobId, state: JobState) -> Result<()> {
         let now = unix_timestamp();
@@ -310,6 +349,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn recover_running_jobs_resets_to_queued() {
+        let db = open_memory().await.unwrap();
+        let id = db
+            .add_job("https://example.com/x", &JobSettings::default())
+            .await
+            .unwrap();
+        db.set_state(id, JobState::Running).await.unwrap();
+        assert_eq!(db.list_jobs().await.unwrap()[0].state, JobState::Running);
+
+        let n = db.recover_running_jobs().await.unwrap();
+        assert_eq!(n, 1);
+        let jobs = db.list_jobs().await.unwrap();
+        assert_eq!(jobs[0].state, JobState::Queued);
+    }
+
+    #[tokio::test]
     async fn add_list_remove_jobs() {
         let db = open_memory().await.unwrap();
         assert!(db.list_jobs().await.unwrap().is_empty());
@@ -387,12 +442,18 @@ mod tests {
         assert_eq!(job2.temp_filename.as_deref(), Some("file.iso.part"));
         assert_eq!(job2.total_size, Some(1024));
         assert_eq!(job2.etag.as_deref(), Some("etag-1"));
+        assert_eq!(job2.completed_bitmap, vec![0b0000_1111]);
+
+        // update_bitmap only changes the bitmap (durable progress).
+        db.update_bitmap(id, &[0b1111_0000]).await.unwrap();
+        let job3 = db.get_job(id).await.unwrap().expect("job exists");
+        assert_eq!(job3.completed_bitmap, vec![0b1111_0000]);
+        assert_eq!(job3.final_filename.as_deref(), Some("file.iso"));
         assert_eq!(
-            job2.last_modified.as_deref(),
+            job3.last_modified.as_deref(),
             Some("Wed, 21 Oct 2015 07:28:00 GMT")
         );
-        assert_eq!(job2.segment_count, 4);
-        assert_eq!(job2.completed_bitmap, vec![0b0000_1111]);
+        assert_eq!(job3.segment_count, 4);
     }
 }
 

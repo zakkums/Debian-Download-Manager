@@ -113,6 +113,13 @@ pub async fn run_one_job(
 
     db.set_state(job_id, JobState::Running).await?;
 
+    if needs_metadata && temp_path.exists() {
+        tokio::fs::remove_file(&temp_path)
+            .await
+            .with_context(|| format!("remove temp file for force-restart: {}", temp_path.display()))?;
+        tracing::debug!(path = %temp_path.display(), "removed existing .part for clean restart");
+    }
+
     let storage_writer = if temp_path.exists() {
         storage::StorageWriter::open_existing(&temp_path)
             .with_context(|| format!("open existing temp file: {}", temp_path.display()))?
@@ -134,6 +141,17 @@ pub async fn run_one_job(
         .map(|(_, s)| s.end - s.start)
         .sum();
     let download_start = Instant::now();
+
+    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(8);
+    let db_clone = db.clone();
+    let progress_handle = tokio::spawn(async move {
+        while let Some(blob) = progress_rx.recv().await {
+            if db_clone.update_bitmap(job_id, &blob).await.is_err() {
+                tracing::warn!(job_id, "durable progress update failed");
+            }
+        }
+    });
+
     let (bitmap, summary) = {
         let url = url.clone();
         let headers = headers.clone();
@@ -141,6 +159,7 @@ pub async fn run_one_job(
         let storage = storage_writer.clone();
         let max_concurrent = max_concurrent;
         let policy = retry_policy;
+        let tx = progress_tx.clone();
         tokio::task::spawn_blocking(move || -> Result<(segmenter::SegmentBitmap, DownloadSummary)> {
             let mut summary = DownloadSummary::default();
             downloader::download_segments(
@@ -152,12 +171,16 @@ pub async fn run_one_job(
                 Some(max_concurrent),
                 Some(&policy),
                 &mut summary,
+                Some(&tx),
             )?;
             Ok((bitmap, summary))
         })
         .await
         .context("download task join")??
     };
+
+    drop(progress_tx);
+    progress_handle.await.context("progress writer join")?;
     let download_elapsed = download_start.elapsed();
     host_policy
         .record_job_outcome(

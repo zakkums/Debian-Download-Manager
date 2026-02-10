@@ -1,7 +1,8 @@
 //! Disk I/O and file lifecycle.
 //!
-//! Preallocates temp files, supports concurrent offset writes (pwrite),
-//! fsync policy, and atomic finalize (rename from `.part` to final name).
+//! Preallocates temp files (fallocate on Linux when available, else set_len),
+//! supports concurrent offset writes (pwrite), fsync policy, and atomic
+//! finalize (rename from `.part` to final name).
 
 use anyhow::{Context, Result};
 use std::fs::File;
@@ -9,6 +10,8 @@ use std::path::Path;
 use std::sync::Arc;
 #[cfg(unix)]
 use std::os::unix::fs::FileExt;
+#[cfg(unix)]
+use std::os::unix::io::AsRawFd;
 
 /// Temporary file suffix used before atomic rename.
 pub const TEMP_SUFFIX: &str = ".part";
@@ -36,8 +39,18 @@ impl StorageWriterBuilder {
         })
     }
 
-    /// Preallocate `size` bytes. Uses `set_len` (on Linux this reserves space).
+    /// Preallocate `size` bytes. On Unix tries `posix_fallocate` for real block
+    /// allocation (better throughput, less fragmentation); falls back to `set_len` on failure or non-Unix.
     pub fn preallocate(&mut self, size: u64) -> Result<()> {
+        #[cfg(unix)]
+        {
+            let fd = self.file.as_raw_fd();
+            let r = unsafe { libc::posix_fallocate(fd, 0, size as libc::off_t) };
+            if r == 0 {
+                return Ok(());
+            }
+            tracing::debug!(errno = r, "posix_fallocate failed, falling back to set_len");
+        }
         self.file
             .set_len(size)
             .context("failed to preallocate file")?;

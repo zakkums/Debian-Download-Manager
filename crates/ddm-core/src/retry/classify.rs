@@ -35,6 +35,9 @@ pub enum SegmentError {
     Curl(curl::Error),
     /// HTTP response had a non-2xx status.
     Http(u32),
+    /// Transfer completed but fewer bytes were written than the segment length
+    /// (e.g. server closed early). Enables retry instead of silent corruption.
+    PartialTransfer { expected: u64, received: u64 },
 }
 
 impl fmt::Display for SegmentError {
@@ -42,6 +45,9 @@ impl fmt::Display for SegmentError {
         match self {
             SegmentError::Curl(e) => write!(f, "{}", e),
             SegmentError::Http(code) => write!(f, "HTTP {}", code),
+            SegmentError::PartialTransfer { expected, received } => {
+                write!(f, "partial transfer: expected {} bytes, got {}", expected, received)
+            }
         }
     }
 }
@@ -50,7 +56,7 @@ impl std::error::Error for SegmentError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             SegmentError::Curl(e) => Some(e),
-            SegmentError::Http(_) => None,
+            SegmentError::Http(_) | SegmentError::PartialTransfer { .. } => None,
         }
     }
 }
@@ -68,6 +74,9 @@ pub fn classify_http_status(code: u32) -> ErrorKind {
 pub fn classify_curl_error(e: &curl::Error) -> ErrorKind {
     if e.is_operation_timedout() {
         return ErrorKind::Timeout;
+    }
+    if e.is_write_error() {
+        return ErrorKind::Connection;
     }
     if e.is_couldnt_connect()
         || e.is_couldnt_resolve_host()
@@ -87,6 +96,7 @@ pub fn classify(e: &SegmentError) -> ErrorKind {
     match e {
         SegmentError::Curl(ce) => classify_curl_error(ce),
         SegmentError::Http(code) => classify_http_status(*code),
+        SegmentError::PartialTransfer { .. } => ErrorKind::Connection,
     }
 }
 
@@ -110,5 +120,14 @@ mod tests {
     fn http_4xx_other() {
         assert_eq!(classify_http_status(404), ErrorKind::Other);
         assert_eq!(classify_http_status(403), ErrorKind::Other);
+    }
+
+    #[test]
+    fn partial_transfer_classified_as_connection() {
+        let e = SegmentError::PartialTransfer {
+            expected: 100,
+            received: 50,
+        };
+        assert_eq!(classify(&e), ErrorKind::Connection);
     }
 }
