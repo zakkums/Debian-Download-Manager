@@ -6,7 +6,7 @@
 //! optional `RetryPolicy`.
 
 use anyhow::{Context, Result};
-use crate::retry::{run_with_retry, SegmentError, RetryPolicy};
+use crate::retry::{classify, run_with_retry, ErrorKind, SegmentError, RetryPolicy};
 use crate::segmenter::{Segment, SegmentBitmap};
 use crate::storage::StorageWriter;
 use std::cell::Cell;
@@ -18,6 +18,13 @@ use std::time::Duration;
 
 /// Result of a single segment download (used for retry classification).
 pub type SegmentResult = Result<(), SegmentError>;
+
+/// Summary of a download run for adaptive policy: throttle and error counts.
+#[derive(Debug, Clone, Default)]
+pub struct DownloadSummary {
+    pub throttle_events: u32,
+    pub error_events: u32,
+}
 
 /// Downloads a single segment: GET with Range header, write body to storage at segment offset.
 /// Returns `SegmentError` so callers can classify and retry with backoff.
@@ -79,6 +86,7 @@ fn download_one_segment(
 /// global connection limit). When `None`, one thread per incomplete segment (no limit).
 /// When `retry_policy` is `Some`, each segment is retried with exponential backoff on
 /// timeouts, connection errors, and 429/503/5xx.
+/// Fills `summary_out` with throttle/error counts (even on failure) for adaptive policy.
 pub fn download_segments(
     url: &str,
     custom_headers: &HashMap<String, String>,
@@ -87,6 +95,7 @@ pub fn download_segments(
     bitmap: &mut SegmentBitmap,
     max_concurrent: Option<usize>,
     retry_policy: Option<&RetryPolicy>,
+    summary_out: &mut DownloadSummary,
 ) -> Result<()> {
     let incomplete: Vec<(usize, Segment)> = segments
         .iter()
@@ -98,13 +107,14 @@ pub fn download_segments(
     if incomplete.is_empty() {
         return Ok(());
     }
+    *summary_out = DownloadSummary::default();
 
     let url = url.to_string();
     let headers = custom_headers.clone();
     let storage = storage.clone();
 
     let count = incomplete.len();
-    let results: Vec<(usize, Result<()>)> = if let Some(max) = max_concurrent {
+    let results: Vec<(usize, SegmentResult)> = if let Some(max) = max_concurrent {
         let work: Arc<Mutex<VecDeque<(usize, Segment)>>> =
             Arc::new(Mutex::new(incomplete.into_iter().collect()));
         let (tx, rx) = mpsc::channel();
@@ -123,7 +133,7 @@ pub fn download_segments(
                         Some(p) => p,
                         None => break,
                     };
-                    let res = match policy {
+                    let res: SegmentResult = match policy {
                         Some(p) => run_with_retry(&p, || download_one_segment(&u, &h, &segment, &st)),
                         None => download_one_segment(&u, &h, &segment, &st),
                     };
@@ -135,7 +145,7 @@ pub fn download_segments(
         let mut results_vec = Vec::with_capacity(count);
         for _ in 0..count {
             let (index, res) = rx.recv().expect("worker result");
-            results_vec.push((index, res.map_err(|e| anyhow::anyhow!("{}", e))));
+            results_vec.push((index, res));
         }
         for h in handles {
             h.join().unwrap_or_else(|e| panic!("worker panicked: {:?}", e));
@@ -149,26 +159,36 @@ pub fn download_segments(
                 let h = headers.clone();
                 let st = storage.clone();
                 let policy = retry_policy.copied();
-                let handle = std::thread::spawn(move || {
+                let res = std::thread::spawn(move || {
                     match policy {
                         Some(p) => run_with_retry(&p, || download_one_segment(&u, &h, &segment, &st)),
                         None => download_one_segment(&u, &h, &segment, &st),
                     }
-                });
-                let res = handle
-                    .join()
-                    .map_err(|e| anyhow::anyhow!("thread panicked: {:?}", e))
-                    .and_then(|r| r.map_err(|e| anyhow::anyhow!("{}", e)));
+                })
+                .join()
+                .unwrap_or_else(|e| panic!("worker panicked: {:?}", e));
                 (index, res)
             })
             .collect()
     };
 
     for (index, res) in results {
-        res.with_context(|| format!("segment {}", index))?;
-        bitmap.set_completed(index);
+        match res {
+            Ok(()) => {
+                bitmap.set_completed(index);
+            }
+            Err(e) => {
+                let kind = classify(&e);
+                if kind == ErrorKind::Throttled {
+                    summary_out.throttle_events += 1;
+                } else if kind != ErrorKind::Other {
+                    summary_out.error_events += 1;
+                }
+                return Err(anyhow::anyhow!("{}", e))
+                    .with_context(|| format!("segment {}", index));
+            }
+        }
     }
-
     Ok(())
 }
 

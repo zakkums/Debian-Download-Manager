@@ -43,8 +43,8 @@ Use this file to see what’s done and what’s left. When starting a new chat, 
 
 ### Robustness and tuning
 
-- [ ] **Host policy (`host_policy`)** – Cache keyed by scheme+host+port: range support, throttling history, recommended max segments.
-- [ ] **Adaptive optimizer** – Start at 4 segments; increase to 8/16 if throughput improves; reduce on throttling or high error rate.
+- [x] **Host policy (`host_policy`)** – Cache keyed by scheme+host+port: range support, throttling history, recommended max segments.
+- [x] **Adaptive optimizer** – Start at 4 segments; increase to 8/16 if throughput improves; reduce on throttling or high error rate.
 - [ ] **Progress output** – Bytes done, ETA, per-connection rate, total rate (no GUI; CLI-friendly).
 
 ### Optional and polish
@@ -57,7 +57,7 @@ Use this file to see what’s done and what’s left. When starting a new chat, 
 ### Integration and quality
 
 - [ ] **Integration test** – Local HTTP server with Range support; multi-segment download + resume.
-- [ ] **Tests for new code** – Unit tests for new modules; update PROGRESS when adding tests. (fetch_head: header parsing; url_model: derivation, CD parsing, sanitize; segmenter: range math, bitmap; storage: create/preallocate/write/finalize; downloader: bitmap filtering.)
+- [ ] **Tests for new code** – Unit tests for new modules; update PROGRESS when adding tests. (fetch_head: header parsing; url_model: derivation, CD parsing, sanitize; segmenter: range math, bitmap; storage: create/preallocate/write/finalize; downloader: bitmap filtering; host_policy: host key parsing, range support, throttling heuristics; adaptive: step up/down on throughput and throttle.)
 
 ---
 

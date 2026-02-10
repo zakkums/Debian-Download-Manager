@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use ddm_core::config;
+use ddm_core::host_policy::HostPolicy;
 use ddm_core::resume_db::{JobSettings, JobState, ResumeDb};
 use ddm_core::scheduler;
 
@@ -87,7 +88,16 @@ impl CliCommand {
             CliCommand::Run { force_restart } => {
                 let download_dir = std::env::current_dir()?;
                 let mut run_count = 0u32;
-                while scheduler::run_next_job(&db, force_restart, &cfg, &download_dir).await? {
+                let mut host_policy = HostPolicy::new(cfg.min_segments, cfg.max_segments);
+                while scheduler::run_next_job(
+                    &db,
+                    force_restart,
+                    &cfg,
+                    &download_dir,
+                    &mut host_policy,
+                )
+                .await?
+                {
                     run_count += 1;
                 }
                 if run_count == 0 {

@@ -3,8 +3,10 @@
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Instant;
 
 use crate::config::DdmConfig;
+use crate::downloader::DownloadSummary;
 use crate::downloader;
 use crate::fetch_head;
 use crate::retry::RetryPolicy;
@@ -13,6 +15,7 @@ use crate::safe_resume;
 use crate::segmenter;
 use crate::storage;
 use crate::url_model;
+use crate::host_policy::HostPolicy;
 
 /// Runs a single job: re-validates with HEAD, then downloads only incomplete segments.
 ///
@@ -24,6 +27,7 @@ pub async fn run_one_job(
     force_restart: bool,
     cfg: &DdmConfig,
     download_dir: &Path,
+    host_policy: &mut HostPolicy,
 ) -> Result<()> {
     let mut job = db
         .get_job(job_id)
@@ -42,6 +46,11 @@ pub async fn run_one_job(
     .context("probe task join")?
     .context("HEAD request failed")?;
 
+    // Update per-host policy cache with the latest HEAD metadata.
+    host_policy
+        .record_head_result(&url, &head)
+        .context("update host policy from HEAD")?;
+
     if !head.accept_ranges {
         anyhow::bail!("server does not support Range requests (Accept-Ranges: bytes)");
     }
@@ -58,7 +67,8 @@ pub async fn run_one_job(
         tracing::info!("force-restart: discarding progress and re-downloading (remote changed)");
     }
 
-    let segment_count = choose_segment_count(total_size, cfg);
+    let segment_count =
+        choose_segment_count(total_size, cfg, &url, host_policy);
     let final_name =
         url_model::derive_filename(&url, head.content_disposition.as_deref());
     let temp_name = storage::temp_path(Path::new(&final_name));
@@ -117,14 +127,22 @@ pub async fn run_one_job(
         .min(cfg.max_total_connections)
         .min(segment_count_u);
     let retry_policy = RetryPolicy::default();
-    let bitmap = {
+    let bytes_this_run: u64 = segments
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !bitmap.is_completed(*i))
+        .map(|(_, s)| s.end - s.start)
+        .sum();
+    let download_start = Instant::now();
+    let (bitmap, summary) = {
         let url = url.clone();
         let headers = headers.clone();
         let segments = segments.clone();
         let storage = storage_writer.clone();
         let max_concurrent = max_concurrent;
         let policy = retry_policy;
-        tokio::task::spawn_blocking(move || -> Result<segmenter::SegmentBitmap> {
+        tokio::task::spawn_blocking(move || -> Result<(segmenter::SegmentBitmap, DownloadSummary)> {
+            let mut summary = DownloadSummary::default();
             downloader::download_segments(
                 &url,
                 &headers,
@@ -133,12 +151,24 @@ pub async fn run_one_job(
                 &mut bitmap,
                 Some(max_concurrent),
                 Some(&policy),
+                &mut summary,
             )?;
-            Ok(bitmap)
+            Ok((bitmap, summary))
         })
         .await
         .context("download task join")??
     };
+    let download_elapsed = download_start.elapsed();
+    host_policy
+        .record_job_outcome(
+            &url,
+            segment_count_u,
+            bytes_this_run,
+            download_elapsed,
+            summary.throttle_events,
+            summary.error_events,
+        )
+        .context("record job outcome for adaptive policy")?;
 
     storage_writer.sync()?;
 
@@ -162,8 +192,20 @@ pub async fn run_one_job(
     Ok(())
 }
 
-fn choose_segment_count(total_size: u64, cfg: &DdmConfig) -> usize {
-    let n = cfg.min_segments.max(1).min(cfg.max_segments);
+/// Chooses segment count: adaptive (4/8/16) capped by host policy and config.
+fn choose_segment_count(
+    total_size: u64,
+    cfg: &DdmConfig,
+    url: &str,
+    host_policy: &crate::host_policy::HostPolicy,
+) -> usize {
+    let adaptive = host_policy
+        .adaptive_segment_count_for_url(url)
+        .unwrap_or_else(|_| cfg.min_segments.max(1).min(cfg.max_segments));
+    let n = adaptive
+        .max(cfg.min_segments)
+        .min(cfg.max_segments)
+        .max(1);
     if total_size == 0 {
         return n;
     }
@@ -176,6 +218,7 @@ pub async fn run_next_job(
     force_restart: bool,
     cfg: &DdmConfig,
     download_dir: &Path,
+    host_policy: &mut HostPolicy,
 ) -> Result<bool> {
     let jobs = db.list_jobs().await?;
     let next = jobs
@@ -186,6 +229,6 @@ pub async fn run_next_job(
     let Some(job_id) = next else {
         return Ok(false);
     };
-    run_one_job(db, job_id, force_restart, cfg, download_dir).await?;
+    run_one_job(db, job_id, force_restart, cfg, download_dir, host_policy).await?;
     Ok(true)
 }
