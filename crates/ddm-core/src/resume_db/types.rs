@@ -45,6 +45,9 @@ pub struct JobSettings {
     /// Reserved for future per-job tuning (e.g., segment bounds).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// Optional HTTP headers for this job (e.g. Cookie from HAR import with --allow-cookies).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_headers: Option<std::collections::HashMap<String, String>>,
 }
 
 /// Summary view used by the CLI `status` command.

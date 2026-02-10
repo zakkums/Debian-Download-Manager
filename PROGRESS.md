@@ -80,7 +80,7 @@ Work through these in order before adding new features.
 ### Current status (summary)
 
 - **Architecture:** Strong. Recent changes are in the right direction and mostly correct.
-- **Done:** bytes_written fix; segment integrity; abort on write fail; storage errors; job state set to Error on failure; low-speed timeout for segments; progress output (bytes done, ETA, rate). **Next:** Optional polish (checksum, config extensions, etc.).
+- **Done:** bytes_written fix; segment integrity; abort on write fail; storage errors; job state set to Error on failure; low-speed timeout for segments; progress output; abort deadlock fix (drain work queue when aborting so main thread doesn’t wait forever). **Next:** Range enforcement, import-har, bench, persist HostPolicy, global scheduling.
 
 ### Recommended next steps (best ROI sequence)
 
@@ -99,7 +99,7 @@ Work through these in order before adding new features.
 ## Code layout & modularity
 
 - **Modular multi-folder, multi-file design** – Prefer small, focused modules. Use **subdirectories** (e.g. `url_model/`) when a feature spans multiple concerns or would make a single file long.
-- **Avoid long files** – Aim for **< 250 lines per file** (excluding tests). If a module grows beyond that, split it into a folder with `mod.rs` and one or more submodules (e.g. `content_disposition.rs`, `sanitize.rs`).
+- **Avoid long files** – Aim for **< 200 lines per file** (excluding tests). If a module grows beyond that, split it into a folder with `mod.rs` and one or more submodules (e.g. `content_disposition.rs`, `sanitize.rs`).
 - **Keep structure sorted and clear** – Group related code in the same module; keep public API in `mod.rs` or re-exported from submodules. New, large features should be added as **multi-file modules from the start** so the codebase stays navigable and easy to extend.
 
 ---
@@ -133,6 +133,12 @@ Work through these in order before adding new features.
 - [x] **Set job state to Error on failure** – In `run_one_job()`, after setting state to `Running`, the rest of the run is wrapped in an async block whose result is checked; on any error we call `db.set_state(job_id, JobState::Error).await` (best-effort) then propagate. Only `recover_running_jobs()` converts `running` → `queued` (crash recovery).
 - [x] **Low-speed timeout for segments** – Per-segment transfer uses curl `low_speed_limit(1024)` and `low_speed_time(60s)`: abort only if throughput drops below 1 KiB/s for 60s. Hard wall-clock timeout relaxed to 3600s as a safety net so large segments on slow links are not killed by a rigid 300s limit.
 - [x] **Progress output** – `scheduler::ProgressStats` (bytes_done, total_bytes, elapsed_secs, segments_done/count); `bytes_per_sec()`, `eta_secs()`, `fraction()`. Execute sends stats when bitmap updates; CLI `run` spawns receiver and prints throttled line: done/total MiB, %, MiB/s, ETA.
+- [x] **Abort deadlock fix** – In `download_segments()` worker mode, on ErrorKind::Other we set abort and drain the work queue, then subtract drained count from expected results so `rx.recv()` doesn’t block indefinitely when max_concurrent < remaining segments.
+- [x] **Enforce real Range behavior** – In `download_one_segment()` require HTTP 206 for range requests; return `SegmentError::InvalidRangeResponse(code)` on 200/other 2xx; parse and validate Content-Range when present. Prevents corruption when server ignores Range and returns full body.
+- [x] **Implement import-har** – HAR module: parse HAR 1.2, follow redirects (301/302/307/308, redirectURL or Location), resolve final URL; extract Cookie only when `include_cookies`; `JobSettings.custom_headers`; scheduler uses job.settings.custom_headers for probe/download; CLI `ddm import-har <path> [--allow-cookies]` creates job from resolved URL.
+- [x] **Implement bench** – `bench::run_bench(url, headers, cfg, max_bytes)`: HEAD, then for 4/8/16 segments download up to 20 MiB (or max_bytes), measure throughput and DownloadSummary; `recommend_segment_count()` picks best throughput (prefer no errors). CLI `ddm bench <url>` prints table (Segs, Bytes, Time, MiB/s, Throttle, Errors) and recommended segment count.
+- [x] **Persist HostPolicy** – `PersistedHostPolicy` (JSON with string keys "scheme:host:port"); `HostKey::to_string_key`/`from_string_key`; `to_snapshot()`/`from_snapshot()` in state; `save_to_path`/`load_from_path` in persist; CLI `run` loads from default path (or new if missing) and saves after run.
+- [x] **Global scheduling limits** – `GlobalConnectionBudget` in `scheduler/budget.rs`: `reserve(n)` / `release(n)`; CLI `run` creates budget from `max_total_connections` and passes to `run_next_job`; execute phase reserves slots before download and releases on drop so future parallel jobs share the budget.
 
 ---
 
@@ -149,17 +155,26 @@ Work through these in order before adding new features.
 - [x] **Progress durability under errors** – In `download_segments()` process results as they arrive; mark bitmap and persist on each Ok; drain all results and record first error; return error after loop.
 - [x] **Progress coalescing** – Coalesce progress updates every N segments so `try_send()` drops are intentional.
 - [x] **Abort flag** – On non-retryable error (e.g. Storage), signal workers to stop pulling more work.
+- [x] **Abort deadlock fix** – When aborting (ErrorKind::Other), drain the work queue and reduce expected result count so the main thread doesn’t block forever (segments still in queue never get a worker; we now subtract drained count from `to_receive`).
 
 ### Progress and tuning
 
 - [x] **Progress output** – Bytes done, ETA, total rate (MiB/s) shown during `ddm run`; throttled to every 500ms. `ProgressStats` in scheduler; CLI prints progress line (done/total MiB, %, rate, ETA).
+
+### Next (high ROI, in order)
+
+- [x] **Enforce real Range behavior** – Require HTTP 206 for range requests; reject 200 (full body) via `SegmentError::InvalidRangeResponse`; optionally validate Content-Range header matches requested range. Classify as Other (no retry).
+- [x] **Implement import-har** – `har::resolve_har(path, include_cookies)` parses HAR, follows 302/redirectURL to final URL; optional Cookie from request; CLI `import-har` adds job with resolved URL; `JobSettings.custom_headers` stores cookies only when `--allow-cookies`.
+- [x] **Implement bench** – `ddm bench <url>`: run 4/8/16 segments with capped concurrency (20 MiB cap per run); report throughput (MiB/s), throttle/error events, recommended segment count.
+- [x] **Persist HostPolicy** – Save/load to `~/.local/state/ddm/host_policy.json`; `HostPolicy::default_path()`, `save_to_path()`, `load_from_path()`; CLI `run` loads at start and saves at end so tuning survives.
+- [x] **Global scheduling limits** – Global connection budget across jobs so multiple downloads don’t each use full per-host concurrency.
 
 ### Optional and polish
 
 - [ ] **Checksum (`checksum`)** – Optional SHA-256 after completion; off the hot path.
 - [ ] **Config extensions** – Retry policy, bandwidth cap, segment buffer size in `config.toml`.
 - [ ] **HAR resolver (optional)** – Parse HAR → direct URL + minimal headers; `import-har` flow; cookie warning and `--allow-cookies`; keep core resolver-agnostic.
-- [ ] **Bench mode** – `ddm bench <url>`: try different segment counts, report throughput.
+- [x] **Bench mode** – `ddm bench <url>`: try 4/8/16 segments, report throughput and recommended count.
 - [ ] **Curl multi (later)** – Consider only after correctness + durable progress + progress UI; threads are fine for current segment counts.
 
 ### Integration and quality

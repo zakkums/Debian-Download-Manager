@@ -1,10 +1,17 @@
+//! CLI for the DDM download manager.
+
+mod commands;
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use ddm_core::config;
-use ddm_core::host_policy::HostPolicy;
-use ddm_core::resume_db::{JobSettings, JobState, ResumeDb};
-use ddm_core::scheduler::{self, ProgressStats};
-use std::time::Instant;
+use ddm_core::resume_db::ResumeDb;
+use std::path::Path;
+
+use commands::{
+    run_add, run_bench, run_import_har, run_pause, run_remove, run_resume, run_scheduler,
+    run_status,
+};
 
 /// Top-level CLI for the DDM download manager.
 #[derive(Debug, Parser)]
@@ -71,125 +78,24 @@ pub enum CliCommand {
 impl CliCommand {
     pub async fn run_from_args() -> Result<()> {
         let cli = Cli::parse();
-
-        // Load global config early; later stages will pass this down to
-        // scheduler/downloader modules.
         let cfg = config::load_or_init()?;
         tracing::debug!("loaded config: {:?}", cfg);
-
-        // Open (or create) the persistent job database.
         let db = ResumeDb::open_default().await?;
 
         match cli.command {
-            CliCommand::Add { url } => {
-                let settings = JobSettings::default();
-                let id = db.add_job(&url, &settings).await?;
-                println!("Added job {id} for URL: {url}");
-            }
+            CliCommand::Add { url } => run_add(&db, &url).await?,
             CliCommand::Run { force_restart } => {
                 let download_dir = std::env::current_dir()?;
-                let recovered = db.recover_running_jobs().await?;
-                if recovered > 0 {
-                    tracing::info!("recovered {} job(s) from previous run", recovered);
-                }
-                let mut run_count = 0u32;
-                let mut host_policy = HostPolicy::new(cfg.min_segments, cfg.max_segments);
-
-                let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<ProgressStats>(16);
-                const PROGRESS_INTERVAL_MS: u64 = 500;
-                let progress_handle = tokio::spawn(async move {
-                    let mut last_print = Instant::now();
-                    while let Some(stats) = progress_rx.recv().await {
-                        let now = Instant::now();
-                        if now.duration_since(last_print).as_millis() as u64 >= PROGRESS_INTERVAL_MS
-                            || stats.bytes_done >= stats.total_bytes
-                        {
-                            let done_mib = stats.bytes_done as f64 / 1_048_576.0;
-                            let total_mib = stats.total_bytes as f64 / 1_048_576.0;
-                            let pct = stats.fraction() * 100.0;
-                            let rate = stats.bytes_per_sec();
-                            let rate_mib = rate / 1_048_576.0;
-                            let eta = stats
-                                .eta_secs()
-                                .map(|s| format!("{:.0}s", s))
-                                .unwrap_or_else(|| "?".to_string());
-                            println!(
-                                "\r  {:.1} / {:.1} MiB ({:.1}%)  {:.2} MiB/s  ETA {}  ",
-                                done_mib, total_mib, pct, rate_mib, eta
-                            );
-                            last_print = now;
-                        }
-                    }
-                    println!();
-                });
-
-                while scheduler::run_next_job(
-                    &db,
-                    force_restart,
-                    &cfg,
-                    &download_dir,
-                    &mut host_policy,
-                    Some(&progress_tx),
-                )
-                .await?
-                {
-                    run_count += 1;
-                }
-
-                drop(progress_tx);
-                let _ = progress_handle.await;
-
-                if run_count == 0 {
-                    println!("No queued jobs.");
-                } else {
-                    tracing::info!("run completed {} job(s)", run_count);
-                }
+                run_scheduler(&db, &cfg, &download_dir, force_restart).await?;
             }
-            CliCommand::Status => {
-                let jobs = db.list_jobs().await?;
-                if jobs.is_empty() {
-                    println!("No jobs in database.");
-                } else {
-                    println!("{:<6} {:<10} {:<10} {}", "ID", "STATE", "SIZE", "URL");
-                    for j in jobs {
-                        let size_str = j
-                            .total_size
-                            .map(|s| format!("{s}"))
-                            .unwrap_or_else(|| "-".to_string());
-                        println!(
-                            "{:<6} {:<10} {:<10} {}",
-                            j.id,
-                            format!("{:?}", j.state).to_lowercase(),
-                            size_str,
-                            j.url
-                        );
-                    }
-                }
-            }
-            CliCommand::Pause { id } => {
-                db.set_state(id, JobState::Paused).await?;
-                println!("Paused job {id}");
-            }
-            CliCommand::Resume { id } => {
-                db.set_state(id, JobState::Queued).await?;
-                println!("Resumed job {id}");
-            }
-            CliCommand::Remove { id } => {
-                db.remove_job(id).await?;
-                println!("Removed job {id}");
-            }
+            CliCommand::Status => run_status(&db).await?,
+            CliCommand::Pause { id } => run_pause(&db, id).await?,
+            CliCommand::Resume { id } => run_resume(&db, id).await?,
+            CliCommand::Remove { id } => run_remove(&db, id).await?,
             CliCommand::ImportHar { path, allow_cookies } => {
-                // TODO: invoke HAR resolver plugin, create job, and kick off download.
-                tracing::info!(
-                    "import-har path={} allow_cookies={}",
-                    path,
-                    allow_cookies
-                );
+                run_import_har(&db, Path::new(&path), allow_cookies).await?;
             }
-            CliCommand::Bench { url } => {
-                // TODO: run benchmark mode for the given URL.
-                tracing::info!("bench url={}", url);
-            }
+            CliCommand::Bench { url } => run_bench(&url).await?,
         }
 
         Ok(())
@@ -198,4 +104,3 @@ impl CliCommand {
 
 #[cfg(test)]
 mod tests;
-

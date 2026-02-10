@@ -5,7 +5,7 @@ use std::time::Instant;
 use super::HostKey;
 
 /// Observed range support for a given host.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum RangeSupport {
     /// No information yet.
     Unknown,

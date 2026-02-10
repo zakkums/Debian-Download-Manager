@@ -77,6 +77,7 @@ async fn job_settings_serialized_in_db() {
     let db = open_memory().await.unwrap();
     let settings = JobSettings {
         note: Some("test job".to_string()),
+        custom_headers: None,
     };
     let id = db
         .add_job("https://example.com/x", &settings)

@@ -38,6 +38,7 @@ pub fn classify(e: &SegmentError) -> ErrorKind {
     match e {
         SegmentError::Curl(ce) => classify_curl_error(ce),
         SegmentError::Http(code) => classify_http_status(*code),
+        SegmentError::InvalidRangeResponse(_) => ErrorKind::Other,
         SegmentError::PartialTransfer { .. } => ErrorKind::Connection,
         SegmentError::Storage(_) => ErrorKind::Other,
     }
@@ -80,6 +81,12 @@ mod tests {
             std::io::ErrorKind::PermissionDenied,
             "read-only filesystem",
         ));
+        assert_eq!(classify(&e), ErrorKind::Other);
+    }
+
+    #[test]
+    fn invalid_range_response_classified_as_other() {
+        let e = SegmentError::InvalidRangeResponse(200);
         assert_eq!(classify(&e), ErrorKind::Other);
     }
 }

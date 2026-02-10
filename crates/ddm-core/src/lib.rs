@@ -2,6 +2,8 @@ pub mod config;
 pub mod logging;
 
 // Core modules (to be implemented step by step)
+pub mod bench;
+pub mod har;
 pub mod url_model;
 pub mod fetch_head;
 pub mod segmenter;

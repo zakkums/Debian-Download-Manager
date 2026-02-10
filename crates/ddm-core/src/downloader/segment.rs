@@ -1,9 +1,14 @@
 //! Single-segment HTTP Range GET and write to storage.
+//!
+//! Enforces Range behavior: we always send a Range header, so we require HTTP 206
+//! Partial Content to avoid servers that ignore Range and return 200 with the
+//! full body (which would corrupt the temp file when written at segment offset).
 
 use crate::retry::SegmentError;
 use crate::segmenter::Segment;
 use crate::storage::StorageWriter;
 use std::collections::HashMap;
+use std::str;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -53,8 +58,17 @@ pub(super) fn download_one_segment(
         easy.http_headers(list).map_err(SegmentError::Curl)?;
     }
 
+    let mut response_headers: Vec<String> = Vec::new();
     {
         let mut transfer = easy.transfer();
+        transfer
+            .header_function(|data| {
+                if let Ok(s) = str::from_utf8(data) {
+                    response_headers.push(s.trim_end().to_string());
+                }
+                true
+            })
+            .map_err(SegmentError::Curl)?;
         transfer
             .write_function(move |data| {
                 let off = bytes_written_in_cb.fetch_add(data.len() as u64, Ordering::Relaxed);
@@ -86,6 +100,18 @@ pub(super) fn download_one_segment(
         return Err(SegmentError::Http(code));
     }
 
+    // We sent a Range header; require 206 Partial Content so we don't accept 200 full-body (corruption).
+    if code != 206 {
+        return Err(SegmentError::InvalidRangeResponse(code));
+    }
+
+    // Optionally validate Content-Range matches our segment (extra safety).
+    if let Some((start, end)) = parse_content_range(&response_headers) {
+        if start != segment.start || end != segment.end.saturating_sub(1) {
+            return Err(SegmentError::InvalidRangeResponse(code));
+        }
+    }
+
     let received = bytes_written.load(Ordering::Relaxed);
     let expected = segment.len();
     if received != expected {
@@ -93,4 +119,24 @@ pub(super) fn download_one_segment(
     }
 
     Ok(())
+}
+
+/// Parse Content-Range from response headers. Returns (start, end_inclusive) if present and valid.
+/// Format: "Content-Range: bytes start-end/total" or "bytes start-end/*".
+pub(crate) fn parse_content_range(headers: &[String]) -> Option<(u64, u64)> {
+    const PREFIX: &str = "Content-Range:";
+    for line in headers {
+        let line = line.trim();
+        if line.len() >= PREFIX.len() && line[..PREFIX.len()].eq_ignore_ascii_case(PREFIX) {
+            let rest = line[PREFIX.len()..].trim();
+            let rest = rest.strip_prefix("bytes")?.trim();
+            let (range, _) = rest.split_once('/')?;
+            let range = range.trim();
+            let (start_str, end_str) = range.split_once('-')?;
+            let start: u64 = start_str.trim().parse().ok()?;
+            let end_inclusive: u64 = end_str.trim().parse().ok()?;
+            return Some((start, end_inclusive));
+        }
+    }
+    None
 }

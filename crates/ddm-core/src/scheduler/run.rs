@@ -13,6 +13,7 @@ use crate::storage;
 use crate::url_model;
 use crate::host_policy::HostPolicy;
 
+use super::budget::GlobalConnectionBudget;
 use super::choose;
 use super::execute;
 use super::progress::ProgressStats;
@@ -32,6 +33,7 @@ pub async fn run_one_job(
     download_dir: &Path,
     host_policy: &mut HostPolicy,
     progress_tx: Option<&tokio::sync::mpsc::Sender<ProgressStats>>,
+    global_budget: Option<&GlobalConnectionBudget>,
 ) -> Result<()> {
     let mut job = db
         .get_job(job_id)
@@ -39,7 +41,11 @@ pub async fn run_one_job(
         .ok_or_else(|| anyhow::anyhow!("job {} not found", job_id))?;
 
     let url = job.url.clone();
-    let headers: HashMap<String, String> = HashMap::new();
+    let headers: HashMap<String, String> = job
+        .settings
+        .custom_headers
+        .clone()
+        .unwrap_or_default();
 
     let head = tokio::task::spawn_blocking({
         let url = url.clone();
@@ -133,6 +139,7 @@ pub async fn run_one_job(
         cfg,
         host_policy,
         progress_tx,
+        global_budget,
     )
     .await;
 
@@ -151,6 +158,7 @@ pub async fn run_next_job(
     download_dir: &Path,
     host_policy: &mut HostPolicy,
     progress_tx: Option<&tokio::sync::mpsc::Sender<ProgressStats>>,
+    global_budget: Option<&GlobalConnectionBudget>,
 ) -> Result<bool> {
     let jobs = db.list_jobs().await?;
     let next = jobs
@@ -161,6 +169,16 @@ pub async fn run_next_job(
     let Some(job_id) = next else {
         return Ok(false);
     };
-    run_one_job(db, job_id, force_restart, cfg, download_dir, host_policy, progress_tx).await?;
+    run_one_job(
+        db,
+        job_id,
+        force_restart,
+        cfg,
+        download_dir,
+        host_policy,
+        progress_tx,
+        global_budget,
+    )
+    .await?;
     Ok(true)
 }

@@ -11,6 +11,7 @@
 
 mod entry;
 mod key;
+mod persist;
 mod state;
 
 pub use entry::{HostEntry, RangeSupport};

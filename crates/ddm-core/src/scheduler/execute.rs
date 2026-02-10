@@ -14,7 +14,20 @@ use crate::segmenter;
 use crate::storage;
 use crate::host_policy::HostPolicy;
 
+use super::budget::GlobalConnectionBudget;
 use super::progress::ProgressStats;
+
+/// Releases reserved connections when dropped.
+struct BudgetGuard<'a> {
+    budget: &'a GlobalConnectionBudget,
+    reserved: usize,
+}
+
+impl Drop for BudgetGuard<'_> {
+    fn drop(&mut self) {
+        self.budget.release(self.reserved);
+    }
+}
 
 /// Runs the download phase: open/create storage, download incomplete segments,
 /// persist progress, update metadata, and finalize if complete.
@@ -36,6 +49,7 @@ pub(super) async fn execute_download_phase(
     cfg: &DdmConfig,
     host_policy: &mut HostPolicy,
     progress_tx: Option<&tokio::sync::mpsc::Sender<ProgressStats>>,
+    global_budget: Option<&GlobalConnectionBudget>,
 ) -> Result<()> {
     if needs_metadata && temp_path.exists() {
         tokio::fs::remove_file(temp_path)
@@ -57,6 +71,14 @@ pub(super) async fn execute_download_phase(
     let max_concurrent = (cfg.max_connections_per_host)
         .min(cfg.max_total_connections)
         .min(segment_count_u);
+    let actual_concurrent = match global_budget {
+        Some(b) => b.reserve(max_concurrent),
+        None => max_concurrent,
+    };
+    let _budget_guard = global_budget.map(|b| BudgetGuard {
+        budget: b,
+        reserved: actual_concurrent,
+    });
     let retry_policy = RetryPolicy::default();
     let bytes_this_run: u64 = segments
         .iter()
@@ -104,7 +126,7 @@ pub(super) async fn execute_download_phase(
         let headers = headers.clone();
         let segments = segments.to_vec();
         let storage = storage_writer.clone();
-        let max_concurrent = max_concurrent;
+        let max_concurrent = actual_concurrent.max(1);
         let policy = retry_policy;
         let tx = bitmap_tx.clone();
         tokio::task::spawn_blocking(move || -> Result<(segmenter::SegmentBitmap, DownloadSummary)> {

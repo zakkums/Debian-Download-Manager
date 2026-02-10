@@ -34,6 +34,9 @@ tokio = { version = "1.37", features = ["fs", "rt-multi-thread", "macros", "time
 # URL parsing for path segment extraction
 url = "2.5"
 
+# Temp dir for bench
+tempfile = "3.14"
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
