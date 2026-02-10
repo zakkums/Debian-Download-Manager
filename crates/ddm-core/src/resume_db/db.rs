@@ -1,69 +1,11 @@
-//! Persistent resume/job database (SQLite via sqlx).
-//!
-//! Stores jobs, filenames, sizes, segment completion bitmaps, and
-//! ETag/Last-Modified metadata for safe resume.
+//! SQLite-backed job database implementation.
 
 use anyhow::Result;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::{Pool, Row, Sqlite};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Job identifier.
-pub type JobId = i64;
-
-/// High-level job state stored as a string in the database.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum JobState {
-    Queued,
-    Running,
-    Paused,
-    Completed,
-    Error,
-}
-
-impl JobState {
-    fn as_str(self) -> &'static str {
-        match self {
-            JobState::Queued => "queued",
-            JobState::Running => "running",
-            JobState::Paused => "paused",
-            JobState::Completed => "completed",
-            JobState::Error => "error",
-        }
-    }
-
-    fn from_str(s: &str) -> Self {
-        match s {
-            "queued" => JobState::Queued,
-            "running" => JobState::Running,
-            "paused" => JobState::Paused,
-            "completed" => JobState::Completed,
-            "error" => JobState::Error,
-            _ => JobState::Error,
-        }
-    }
-}
-
-/// Minimal per-job settings container, stored as JSON in the DB.
-///
-/// This keeps the schema flexible while still allowing structured config
-/// per job (segment limits, bandwidth caps, etc.) as we extend the core.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
-pub struct JobSettings {
-    /// Reserved for future per-job tuning (e.g., segment bounds).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub note: Option<String>,
-}
-
-/// Summary view used by the CLI `status` command.
-#[derive(Debug, Clone)]
-pub struct JobSummary {
-    pub id: JobId,
-    pub url: String,
-    pub state: JobState,
-    pub final_filename: Option<String>,
-    pub total_size: Option<i64>,
-}
+use super::types::{JobDetails, JobId, JobMetadata, JobSettings, JobState, JobSummary};
 
 /// Handle to the SQLite-backed job database.
 ///
@@ -71,7 +13,7 @@ pub struct JobSummary {
 /// `~/.local/state/ddm/jobs.db` on Debian.
 #[derive(Clone)]
 pub struct ResumeDb {
-    pool: Pool<Sqlite>,
+    pub(crate) pool: Pool<Sqlite>,
 }
 
 impl ResumeDb {
@@ -188,6 +130,96 @@ impl ResumeDb {
         }
 
         Ok(out)
+    }
+
+    /// Fetch a single job row with full metadata for the scheduler.
+    pub async fn get_job(&self, id: JobId) -> Result<Option<JobDetails>> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+                id, url, final_filename, temp_filename, total_size,
+                etag, last_modified, segment_count, completed_bitmap,
+                state, created_at, updated_at, settings_json
+            FROM jobs
+            WHERE id = ?1
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let id: i64 = row.get("id");
+        let url: String = row.get("url");
+        let final_filename: Option<String> = row.get("final_filename");
+        let temp_filename: Option<String> = row.get("temp_filename");
+        let total_size: Option<i64> = row.get("total_size");
+        let etag: Option<String> = row.get("etag");
+        let last_modified: Option<String> = row.get("last_modified");
+        let segment_count: i64 = row.get("segment_count");
+        let completed_bitmap: Vec<u8> = row.get("completed_bitmap");
+        let state_str: String = row.get("state");
+        let created_at: i64 = row.get("created_at");
+        let updated_at: i64 = row.get("updated_at");
+        let settings_json: Option<String> = row.get("settings_json");
+
+        let settings = settings_json
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .map(|s| serde_json::from_str::<JobSettings>(s))
+            .transpose()?
+            .unwrap_or_default();
+
+        Ok(Some(JobDetails {
+            id,
+            url,
+            final_filename,
+            temp_filename,
+            total_size,
+            etag,
+            last_modified,
+            segment_count,
+            completed_bitmap,
+            state: JobState::from_str(&state_str),
+            created_at,
+            updated_at,
+            settings,
+        }))
+    }
+
+    /// Update metadata fields for an existing job after HEAD/segment planning.
+    pub async fn update_metadata(&self, id: JobId, meta: &JobMetadata) -> Result<()> {
+        let now = unix_timestamp();
+        sqlx::query(
+            r#"
+            UPDATE jobs
+            SET final_filename = ?1,
+                temp_filename = ?2,
+                total_size = ?3,
+                etag = ?4,
+                last_modified = ?5,
+                segment_count = ?6,
+                completed_bitmap = ?7,
+                updated_at = ?8
+            WHERE id = ?9
+            "#,
+        )
+        .bind(&meta.final_filename)
+        .bind(&meta.temp_filename)
+        .bind(meta.total_size)
+        .bind(&meta.etag)
+        .bind(&meta.last_modified)
+        .bind(meta.segment_count)
+        .bind(&meta.completed_bitmap)
+        .bind(now)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
     }
 
     /// Update the state of an existing job.
@@ -318,6 +350,49 @@ mod tests {
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].id, id);
         // Summary doesn't include settings; we only check add_job accepted the struct
+    }
+
+    #[tokio::test]
+    async fn get_job_and_update_metadata_roundtrip() {
+        let db = open_memory().await.unwrap();
+        let id = db
+            .add_job("https://example.com/file.iso", &JobSettings::default())
+            .await
+            .unwrap();
+
+        // Initially metadata should be defaults.
+        let job = db.get_job(id).await.unwrap().expect("job exists");
+        assert_eq!(job.id, id);
+        assert_eq!(job.url, "https://example.com/file.iso");
+        assert_eq!(job.final_filename, None);
+        assert_eq!(job.temp_filename, None);
+        assert_eq!(job.total_size, None);
+        assert_eq!(job.segment_count, 0);
+        assert!(job.completed_bitmap.is_empty());
+
+        // Update metadata.
+        let meta = JobMetadata {
+            final_filename: Some("file.iso".to_string()),
+            temp_filename: Some("file.iso.part".to_string()),
+            total_size: Some(1024),
+            etag: Some("etag-1".to_string()),
+            last_modified: Some("Wed, 21 Oct 2015 07:28:00 GMT".to_string()),
+            segment_count: 4,
+            completed_bitmap: vec![0b0000_1111],
+        };
+        db.update_metadata(id, &meta).await.unwrap();
+
+        let job2 = db.get_job(id).await.unwrap().expect("job exists");
+        assert_eq!(job2.final_filename.as_deref(), Some("file.iso"));
+        assert_eq!(job2.temp_filename.as_deref(), Some("file.iso.part"));
+        assert_eq!(job2.total_size, Some(1024));
+        assert_eq!(job2.etag.as_deref(), Some("etag-1"));
+        assert_eq!(
+            job2.last_modified.as_deref(),
+            Some("Wed, 21 Oct 2015 07:28:00 GMT")
+        );
+        assert_eq!(job2.segment_count, 4);
+        assert_eq!(job2.completed_bitmap, vec![0b0000_1111]);
     }
 }
 

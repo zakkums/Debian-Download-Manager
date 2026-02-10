@@ -18,7 +18,7 @@ Use this file to see what’s done and what’s left. When starting a new chat, 
 - [x] **CLI scaffold** – `clap` subcommands: `add`, `run`, `status`, `pause`, `resume`, `remove`, `import-har`, `bench`.
 - [x] **Config** – `~/.config/ddm/config.toml`, `DdmConfig` (connection/segment bounds), load-or-init.
 - [x] **Logging** – Structured logging to `~/.local/state/ddm/ddm.log` (XDG state).
-- [x] **Resume DB (SQLite)** – `ResumeDb` in `resume_db`, jobs table (url, filenames, size, etag, last_modified, segment_count, completed_bitmap, state, settings_json). `add_job`, `list_jobs`, `set_state`, `remove_job`. In-memory tests.
+- [x] **Resume DB (SQLite)** – `ResumeDb` in `resume_db`, jobs table (url, filenames, size, etag, last_modified, segment_count, completed_bitmap, state, settings_json). `add_job`, `list_jobs`, `set_state`, `remove_job`. `get_job(id)` returns full metadata + settings; `update_metadata(id, JobMetadata)` fills `final_filename`, `temp_filename`, `total_size`, `etag`, `last_modified`, `segment_count`, `completed_bitmap`. In-memory tests.
 - [x] **CLI wired to DB** – `add`/`status`/`pause`/`resume`/`remove` use `ResumeDb`; async main with tokio.
 - [x] **Tests** – Unit tests for config, resolver, resume_db (in-memory); CLI parse tests. `cargo test` passes.
 - [x] **Docs** – `ARCHITECTURE.md`, `docs_http_client_choice.md`, Testing section.
@@ -32,7 +32,7 @@ Use this file to see what’s done and what’s left. When starting a new chat, 
 
 ## In progress
 
-- [ ] **Resume DB extensions** – Next: store/update `final_filename`, `temp_filename`, `total_size`, `etag`, `last_modified`, `segment_count`, `completed_bitmap`; add `get_job(id)` for scheduler.
+- [ ] **Safe resume** – Next: on start, re-validate ETag/Last-Modified and size; if changed, require explicit user override; else download only missing segments per bitmap (using `ResumeDb::get_job` and `SegmentBitmap`).
 
 ---
 
@@ -40,8 +40,6 @@ Use this file to see what’s done and what’s left. When starting a new chat, 
 
 ### Core download pipeline
 
-- [ ] **Resume DB extensions** – Store/update `final_filename`, `temp_filename`, `total_size`, `etag`, `last_modified`, `segment_count`, `completed_bitmap`; possibly `get_job(id)` for scheduler.
-- [ ] **Safe resume** – On start: re-validate ETag/Last-Modified and size; if changed, require explicit user override; else download only missing segments per bitmap.
 - [ ] **Scheduler (`scheduler`)** – Coordinate jobs; call fetch_head → segmenter → downloader → storage; respect per-host and global connection limits; trigger resume logic.
 
 ### Robustness and tuning
