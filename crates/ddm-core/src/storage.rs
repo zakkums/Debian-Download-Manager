@@ -7,7 +7,6 @@ use anyhow::{Context, Result};
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
-
 #[cfg(unix)]
 use std::os::unix::fs::FileExt;
 
@@ -63,6 +62,20 @@ pub struct StorageWriter {
 }
 
 impl StorageWriter {
+    /// Open an existing temp file for resume (read+write, no truncation).
+    /// Use this when resuming a job; the file must already exist and have been preallocated.
+    pub fn open_existing(temp_path: &Path) -> Result<Self> {
+        let file = File::options()
+            .read(true)
+            .write(true)
+            .open(temp_path)
+            .with_context(|| format!("failed to open existing temp file: {}", temp_path.display()))?;
+        Ok(StorageWriter {
+            file: Arc::new(file),
+            temp_path: temp_path.to_path_buf(),
+        })
+    }
+
     /// Write `data` at `offset`. Does not change the file's logical cursor; safe for concurrent use.
     #[cfg(unix)]
     pub fn write_at(&self, offset: u64, data: &[u8]) -> Result<()> {

@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use ddm_core::config;
 use ddm_core::resume_db::{JobSettings, JobState, ResumeDb};
+use ddm_core::scheduler;
 
 /// Top-level CLI for the DDM download manager.
 #[derive(Debug, Parser)]
@@ -21,7 +22,11 @@ pub enum CliCommand {
     },
 
     /// Run the scheduler/worker loop to process queued jobs.
-    Run,
+    Run {
+        /// If the remote file changed (ETag/Last-Modified/size), discard progress and re-download.
+        #[arg(long)]
+        force_restart: bool,
+    },
 
     /// Show status of all jobs.
     Status,
@@ -79,9 +84,17 @@ impl CliCommand {
                 let id = db.add_job(&url, &settings).await?;
                 println!("Added job {id} for URL: {url}");
             }
-            CliCommand::Run => {
-                // TODO: main scheduler/worker loop.
-                tracing::info!("run scheduler (stub)");
+            CliCommand::Run { force_restart } => {
+                let download_dir = std::env::current_dir()?;
+                let mut run_count = 0u32;
+                while scheduler::run_next_job(&db, force_restart, &cfg, &download_dir).await? {
+                    run_count += 1;
+                }
+                if run_count == 0 {
+                    println!("No queued jobs.");
+                } else {
+                    tracing::info!("run completed {} job(s)", run_count);
+                }
             }
             CliCommand::Status => {
                 let jobs = db.list_jobs().await?;

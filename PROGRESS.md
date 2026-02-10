@@ -27,24 +27,22 @@ Use this file to see what’s done and what’s left. When starting a new chat, 
 - [x] **Segmenter (`segmenter`)** – `plan_segments(total_size, segment_count)`; `Segment` with `start`/`end` (half-open) and `range_header_value()` for HTTP Range; `SegmentBitmap` with `new`/`from_bytes`/`to_bytes` (DB BLOB), `set_completed`/`is_completed`/`all_completed`. Unit tests for range math and bitmap.
 - [x] **Storage (`storage`)** – `StorageWriterBuilder::create` / `preallocate` / `build`; `StorageWriter::write_at` (pwrite), `sync`, `finalize` (rename `.part` → final); `temp_path()`. Unit tests for create/preallocate/write/finalize and concurrent-style write_at.
 - [x] **Downloader (`downloader`)** – `download_segments(url, headers, segments, storage, bitmap)`: N concurrent GETs via curl (one thread per incomplete segment), Range header, write to storage at offset, update bitmap on completion. Input: direct URL + optional headers only. Unit test for bitmap filtering.
+- [x] **Safe resume (`safe_resume`)** – On start, re-validate ETag/Last-Modified and size; if changed, require explicit user override (`--force-restart`); else download only missing segments per bitmap. Module: `safe_resume/` with `validate.rs` (comparison logic) and `mod.rs`; `validate_for_resume(job, head)`; `ValidationError::RemoteChanged`. Scheduler `run_one_job` / `run_next_job`: probe → validate → update metadata if force or first run → open/create storage → download only incomplete segments → persist bitmap and finalize if done. CLI `run` with `--force-restart`; storage `open_existing` for resume. Unit tests for validation (no metadata OK, same OK, etag/size/last_modified changed Err).
+- [x] **Scheduler (`scheduler`)** – Coordinate jobs; respect per-host and global connection limits. `download_segments(..., max_concurrent: Option<usize>)` with worker-pool when set; scheduler passes `min(max_connections_per_host, max_total_connections, segment_count)`; `ddm run` processes all queued jobs in a loop (FIFO by job id). One job at a time, each job’s segments bounded by config.
+- [x] **Retry / backoff (`retry`)** – Error classification (timeouts, 429/503, connection resets); exponential backoff. `retry/`: policy (ErrorKind, RetryPolicy, RetryDecision); classify (SegmentError, classify_http_status, classify_curl_error, run_with_retry). Downloader uses SegmentError and run_with_retry per segment; scheduler passes RetryPolicy::default(). Tests: policy + classify. Per-host concurrency reduction deferred to host_policy.
 
 ---
 
 ## In progress
 
-- [ ] **Safe resume** – Next: on start, re-validate ETag/Last-Modified and size; if changed, require explicit user override; else download only missing segments per bitmap (using `ResumeDb::get_job` and `SegmentBitmap`).
+- (none)
 
 ---
 
 ## Not started (order is a suggested sequence)
 
-### Core download pipeline
-
-- [ ] **Scheduler (`scheduler`)** – Coordinate jobs; call fetch_head → segmenter → downloader → storage; respect per-host and global connection limits; trigger resume logic.
-
 ### Robustness and tuning
 
-- [ ] **Retry / backoff** – Error classification (timeouts, 429/503, connection resets); exponential backoff; per-host concurrency reduction on repeated throttling.
 - [ ] **Host policy (`host_policy`)** – Cache keyed by scheme+host+port: range support, throttling history, recommended max segments.
 - [ ] **Adaptive optimizer** – Start at 4 segments; increase to 8/16 if throughput improves; reduce on throttling or high error rate.
 - [ ] **Progress output** – Bytes done, ETA, per-connection rate, total rate (no GUI; CLI-friendly).

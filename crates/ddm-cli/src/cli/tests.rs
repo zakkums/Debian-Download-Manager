@@ -16,8 +16,16 @@ fn cli_parse_add() {
 #[test]
 fn cli_parse_run() {
     match parse(&["ddm", "run"]) {
-        CliCommand::Run => {}
+        CliCommand::Run { force_restart } => assert!(!force_restart),
         _ => panic!("expected Run"),
+    }
+}
+
+#[test]
+fn cli_parse_run_force_restart() {
+    match parse(&["ddm", "run", "--force-restart"]) {
+        CliCommand::Run { force_restart } => assert!(force_restart),
+        _ => panic!("expected Run with force_restart"),
     }
 }
 
