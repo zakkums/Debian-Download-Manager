@@ -1,1 +1,30 @@
-site-inspection/*
+# Build output (Cargo)
+/target/
+
+# Cargo lock is usually committed for binaries; uncomment to ignore
+# Cargo.lock
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local env and secrets
+.env
+.env.local
+.env.*.local
+
+# Debug and coverage
+*.pdb
+coverage/
+*.profraw
+*.profdata
+
+# Optional: local inspection / HAR data (not part of the app)
+site-inspection/

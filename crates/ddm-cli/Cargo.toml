@@ -17,3 +17,7 @@ tracing = "0.1"
 
 ddm-core = { path = "../ddm-core" }
 
+# Async runtime for CLI commands that hit the DB/engine.
+tokio = { version = "1.37", features = ["rt-multi-thread", "macros", "time"] }
+
+

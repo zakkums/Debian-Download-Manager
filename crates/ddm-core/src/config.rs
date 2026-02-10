@@ -55,3 +55,43 @@ pub fn load_or_init() -> Result<DdmConfig> {
     Ok(cfg)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_values() {
+        let cfg = DdmConfig::default();
+        assert_eq!(cfg.max_total_connections, 64);
+        assert_eq!(cfg.max_connections_per_host, 16);
+        assert_eq!(cfg.min_segments, 4);
+        assert_eq!(cfg.max_segments, 16);
+    }
+
+    #[test]
+    fn config_toml_roundtrip() {
+        let cfg = DdmConfig::default();
+        let toml = toml::to_string_pretty(&cfg).unwrap();
+        let parsed: DdmConfig = toml::from_str(&toml).unwrap();
+        assert_eq!(parsed.max_total_connections, cfg.max_total_connections);
+        assert_eq!(parsed.max_connections_per_host, cfg.max_connections_per_host);
+        assert_eq!(parsed.min_segments, cfg.min_segments);
+        assert_eq!(parsed.max_segments, cfg.max_segments);
+    }
+
+    #[test]
+    fn config_toml_custom_values() {
+        let toml = r#"
+            max_total_connections = 8
+            max_connections_per_host = 4
+            min_segments = 2
+            max_segments = 32
+        "#;
+        let cfg: DdmConfig = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.max_total_connections, 8);
+        assert_eq!(cfg.max_connections_per_host, 4);
+        assert_eq!(cfg.min_segments, 2);
+        assert_eq!(cfg.max_segments, 32);
+    }
+}
+

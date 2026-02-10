@@ -12,6 +12,7 @@ thiserror = "1.0"
 
 # Config & serialization
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 toml = "0.8"
 
 # XDG paths for config/state (Debian-friendly)
@@ -20,4 +21,17 @@ xdg = "2.5"
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+
+# HTTP client (HEAD probe; multi interface later for downloader)
+curl = "0.4"
+
+# Persistence
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
+
+# Async runtime (used by sqlx and for tokio::fs in resume_db)
+tokio = { version = "1.37", features = ["fs", "rt-multi-thread", "macros", "time"] }
+
+[dev-dependencies]
+tokio = { version = "1.37", features = ["rt-multi-thread", "macros"] }
+
 

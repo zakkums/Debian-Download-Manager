@@ -76,3 +76,14 @@ resolver) live behind the `resolver` trait and are invoked explicitly by the
 CLI (`import-har`). This keeps the core independent of any particular website
 or authentication flow and makes it easier to audit and extend.
 
+### Testing
+
+Tests live alongside the code they exercise, in `#[cfg(test)] mod tests` blocks
+within each module. New code should include unit and/or integration tests
+before merging.
+
+- **`ddm-core`**: `resume_db` has in-memory SQLite integration tests (add/list/set_state/remove, JobState roundtrip). `config` has unit tests for `DdmConfig` default and TOML roundtrip. `resolver` has unit tests for `ResolvedJobSpec`. `fetch_head` has unit tests for header parsing (Content-Length, Accept-Ranges, ETag, Last-Modified, Content-Disposition).
+- **`ddm-cli`**: `cli` has parse tests for every subcommand via `Cli::try_parse_from`.
+
+Run the full suite with: `cargo test` (from the workspace root).
+
