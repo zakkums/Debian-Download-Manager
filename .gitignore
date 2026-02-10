@@ -1,5 +1,7 @@
 # Build output (Cargo)
-/target/
+target/
+*.rlib
+*.rmeta
 
 # Cargo lock is usually committed for binaries; uncomment to ignore
 # Cargo.lock

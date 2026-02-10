@@ -24,12 +24,15 @@ Use this file to see what’s done and what’s left. When starting a new chat, 
 - [x] **Docs** – `ARCHITECTURE.md`, `docs_http_client_choice.md`, Testing section.
 - [x] **HEAD / metadata probe (`fetch_head`)** – `probe(url, custom_headers)` via curl: HEAD request, parse `Content-Length`, `Accept-Ranges: bytes`, `ETag`, `Last-Modified`, `Content-Disposition`. Unit tests for header parsing.
 - [x] **URL model (`url_model`)** – `derive_filename(url, content_disposition)` derives safe filename from URL path or Content-Disposition; `parse_content_disposition_filename` (quoted, token, `filename*=UTF-8''`); `filename_from_url_path`; `sanitize_filename_for_linux` (no `/`, NUL, control chars; trim dots/spaces; 255-byte limit). Unit tests for derivation, CD parsing, URL path, and sanitization. Implemented as multi-file module: `url_model/mod.rs`, `content_disposition.rs`, `path.rs`, `sanitize.rs`.
+- [x] **Segmenter (`segmenter`)** – `plan_segments(total_size, segment_count)`; `Segment` with `start`/`end` (half-open) and `range_header_value()` for HTTP Range; `SegmentBitmap` with `new`/`from_bytes`/`to_bytes` (DB BLOB), `set_completed`/`is_completed`/`all_completed`. Unit tests for range math and bitmap.
+- [x] **Storage (`storage`)** – `StorageWriterBuilder::create` / `preallocate` / `build`; `StorageWriter::write_at` (pwrite), `sync`, `finalize` (rename `.part` → final); `temp_path()`. Unit tests for create/preallocate/write/finalize and concurrent-style write_at.
+- [x] **Downloader (`downloader`)** – `download_segments(url, headers, segments, storage, bitmap)`: N concurrent GETs via curl (one thread per incomplete segment), Range header, write to storage at offset, update bitmap on completion. Input: direct URL + optional headers only. Unit test for bitmap filtering.
 
 ---
 
 ## In progress
 
-- [ ] **Segmenter (`segmenter`)** – Next: range math (split total size into N segments); HTTP Range header bounds; segment completion bitmap (serialize/deserialize for DB).
+- [ ] **Resume DB extensions** – Next: store/update `final_filename`, `temp_filename`, `total_size`, `etag`, `last_modified`, `segment_count`, `completed_bitmap`; add `get_job(id)` for scheduler.
 
 ---
 
@@ -37,9 +40,6 @@ Use this file to see what’s done and what’s left. When starting a new chat, 
 
 ### Core download pipeline
 
-- [ ] **Segmenter (`segmenter`)** – (See “In progress”.)
-- [ ] **Storage (`storage`)** – Preallocate with `fallocate`; buffered offset writes (e.g. 1–8 MiB segment buffer, pwrite at offset); fsync policy (periodic or at completion); atomic finalize (download to `.part` then rename).
-- [ ] **Downloader (`downloader`)** – Segmented engine: N concurrent HTTP Range requests (libcurl multi or equivalent), write each segment to correct offset, update bitmap on completion. Input: direct URL + optional headers only.
 - [ ] **Resume DB extensions** – Store/update `final_filename`, `temp_filename`, `total_size`, `etag`, `last_modified`, `segment_count`, `completed_bitmap`; possibly `get_job(id)` for scheduler.
 - [ ] **Safe resume** – On start: re-validate ETag/Last-Modified and size; if changed, require explicit user override; else download only missing segments per bitmap.
 - [ ] **Scheduler (`scheduler`)** – Coordinate jobs; call fetch_head → segmenter → downloader → storage; respect per-host and global connection limits; trigger resume logic.
@@ -61,7 +61,7 @@ Use this file to see what’s done and what’s left. When starting a new chat, 
 ### Integration and quality
 
 - [ ] **Integration test** – Local HTTP server with Range support; multi-segment download + resume.
-- [ ] **Tests for new code** – Unit tests for segmenter (range math, bitmap); update PROGRESS when adding tests. (fetch_head: header parsing; url_model: derivation, CD parsing, sanitize.)
+- [ ] **Tests for new code** – Unit tests for new modules; update PROGRESS when adding tests. (fetch_head: header parsing; url_model: derivation, CD parsing, sanitize; segmenter: range math, bitmap; storage: create/preallocate/write/finalize; downloader: bitmap filtering.)
 
 ---
 
