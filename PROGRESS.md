@@ -4,6 +4,14 @@ Use this file to see what’s done and what’s left. When starting a new chat, 
 
 ---
 
+## Code layout & modularity
+
+- **Modular multi-folder, multi-file design** – Prefer small, focused modules. Use **subdirectories** (e.g. `url_model/`) when a feature spans multiple concerns or would make a single file long.
+- **Avoid long files** – Aim for **< 250 lines per file** (excluding tests). If a module grows beyond that, split it into a folder with `mod.rs` and one or more submodules (e.g. `content_disposition.rs`, `sanitize.rs`).
+- **Keep structure sorted and clear** – Group related code in the same module; keep public API in `mod.rs` or re-exported from submodules. New, large features should be added as **multi-file modules from the start** so the codebase stays navigable and easy to extend.
+
+---
+
 ## Done
 
 - [x] **Workspace layout** – `ddm-core` (lib) + `ddm-cli` (binary), modular `src/` layout.
@@ -15,12 +23,13 @@ Use this file to see what’s done and what’s left. When starting a new chat, 
 - [x] **Tests** – Unit tests for config, resolver, resume_db (in-memory); CLI parse tests. `cargo test` passes.
 - [x] **Docs** – `ARCHITECTURE.md`, `docs_http_client_choice.md`, Testing section.
 - [x] **HEAD / metadata probe (`fetch_head`)** – `probe(url, custom_headers)` via curl: HEAD request, parse `Content-Length`, `Accept-Ranges: bytes`, `ETag`, `Last-Modified`, `Content-Disposition`. Unit tests for header parsing.
+- [x] **URL model (`url_model`)** – `derive_filename(url, content_disposition)` derives safe filename from URL path or Content-Disposition; `parse_content_disposition_filename` (quoted, token, `filename*=UTF-8''`); `filename_from_url_path`; `sanitize_filename_for_linux` (no `/`, NUL, control chars; trim dots/spaces; 255-byte limit). Unit tests for derivation, CD parsing, URL path, and sanitization. Implemented as multi-file module: `url_model/mod.rs`, `content_disposition.rs`, `path.rs`, `sanitize.rs`.
 
 ---
 
 ## In progress
 
-- [ ] **URL model (`url_model`)** – Next: derive safe filename from URL path or Content-Disposition; sanitize for Linux.
+- [ ] **Segmenter (`segmenter`)** – Next: range math (split total size into N segments); HTTP Range header bounds; segment completion bitmap (serialize/deserialize for DB).
 
 ---
 
@@ -28,7 +37,7 @@ Use this file to see what’s done and what’s left. When starting a new chat, 
 
 ### Core download pipeline
 
-- [ ] **Segmenter (`segmenter`)** – Range math (split total size into N segments); HTTP Range header bounds; segment completion bitmap (serialize/deserialize for DB).
+- [ ] **Segmenter (`segmenter`)** – (See “In progress”.)
 - [ ] **Storage (`storage`)** – Preallocate with `fallocate`; buffered offset writes (e.g. 1–8 MiB segment buffer, pwrite at offset); fsync policy (periodic or at completion); atomic finalize (download to `.part` then rename).
 - [ ] **Downloader (`downloader`)** – Segmented engine: N concurrent HTTP Range requests (libcurl multi or equivalent), write each segment to correct offset, update bitmap on completion. Input: direct URL + optional headers only.
 - [ ] **Resume DB extensions** – Store/update `final_filename`, `temp_filename`, `total_size`, `etag`, `last_modified`, `segment_count`, `completed_bitmap`; possibly `get_job(id)` for scheduler.
@@ -52,7 +61,7 @@ Use this file to see what’s done and what’s left. When starting a new chat, 
 ### Integration and quality
 
 - [ ] **Integration test** – Local HTTP server with Range support; multi-segment download + resume.
-- [ ] **Tests for new code** – Unit tests for segmenter (range math, bitmap), url_model (sanitize); update PROGRESS when adding tests. (fetch_head has unit tests for header parsing.)
+- [ ] **Tests for new code** – Unit tests for segmenter (range math, bitmap); update PROGRESS when adding tests. (fetch_head: header parsing; url_model: derivation, CD parsing, sanitize.)
 
 ---
 

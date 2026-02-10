@@ -31,6 +31,9 @@ sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
 # Async runtime (used by sqlx and for tokio::fs in resume_db)
 tokio = { version = "1.37", features = ["fs", "rt-multi-thread", "macros", "time"] }
 
+# URL parsing for path segment extraction
+url = "2.5"
+
 [dev-dependencies]
 tokio = { version = "1.37", features = ["rt-multi-thread", "macros"] }
 
