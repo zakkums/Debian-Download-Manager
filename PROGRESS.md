@@ -4,6 +4,14 @@ Use this file to see what’s done and what’s left. When starting a new chat, 
 
 ---
 
+## To do (do first) — DONE
+
+1. ~~**Progress durability under errors**~~ – **Fixed.** Process results as they arrive from `rx.recv()`. Mark bitmap on each Ok, push coalesced bitmap to DB, record first error and drain all, return error after loop. Partial success is saved when one segment fails.
+2. **Progress channel / coalescing** – **Done.** Progress coalesced every N completions so drops are intentional.
+3. ~~**Abort flag for non-retryable errors**~~ – **Done.** On `ErrorKind::Other` we set `abort_requested`; workers stop pulling more work.
+
+---
+
 ## Review summary & roadmap
 
 ### What looks good
@@ -72,7 +80,7 @@ Work through these in order before adding new features.
 ### Current status (summary)
 
 - **Architecture:** Strong. Recent changes are in the right direction and mostly correct.
-- **Done:** bytes_written fix; segment integrity; abort on write fail; storage errors; job state set to Error on failure; low-speed timeout for segments. **Next:** Progress output (bytes done, ETA, rates).
+- **Done:** bytes_written fix; segment integrity; abort on write fail; storage errors; job state set to Error on failure; low-speed timeout for segments; progress output (bytes done, ETA, rate). **Next:** Optional polish (checksum, config extensions, etc.).
 
 ### Recommended next steps (best ROI sequence)
 
@@ -80,10 +88,10 @@ Work through these in order before adding new features.
 2. ~~**Segment integrity check + abort-on-write-fail**~~ – Done.
 3. ~~**Surface storage errors**~~ – Done; `SegmentError::Storage(io::Error)`, classify as Other.
 4. ~~**Set job state to Error on failure**~~ – Done.
-5. **Durable progress commits** – Resume actually works under crashes.
-6. **Force-restart cleans temp file** – Predictable behavior when restarting.
-7. **`fallocate` on Linux** – Performance polish for preallocation.
-8. **Progress UI / stats** – So improvements can be measured.
+5. ~~**Durable progress commits**~~ – Resume actually works under crashes.
+6. ~~**Force-restart cleans temp file**~~ – Predictable behavior when restarting.
+7. ~~**`fallocate` on Linux**~~ – Performance polish for preallocation.
+8. ~~**Progress UI / stats**~~ – Bytes done, ETA, rate during `ddm run`.
 9. Only after the above: consider curl multi (threads are fine up to current segment counts).
 
 ---
@@ -124,6 +132,7 @@ Work through these in order before adding new features.
 - [x] **Surface storage errors** – Write callback stashes IO error from `write_at()` in `Arc<Mutex<Option<io::Error>>>`; when `perform()` fails with curl write error, return `SegmentError::Storage(io_err)`. Classify `Storage` as `ErrorKind::Other` (no retry). Unit test `storage_classified_as_other`.
 - [x] **Set job state to Error on failure** – In `run_one_job()`, after setting state to `Running`, the rest of the run is wrapped in an async block whose result is checked; on any error we call `db.set_state(job_id, JobState::Error).await` (best-effort) then propagate. Only `recover_running_jobs()` converts `running` → `queued` (crash recovery).
 - [x] **Low-speed timeout for segments** – Per-segment transfer uses curl `low_speed_limit(1024)` and `low_speed_time(60s)`: abort only if throughput drops below 1 KiB/s for 60s. Hard wall-clock timeout relaxed to 3600s as a safety net so large segments on slow links are not killed by a rigid 300s limit.
+- [x] **Progress output** – `scheduler::ProgressStats` (bytes_done, total_bytes, elapsed_secs, segments_done/count); `bytes_per_sec()`, `eta_secs()`, `fraction()`. Execute sends stats when bitmap updates; CLI `run` spawns receiver and prints throttled line: done/total MiB, %, MiB/s, ETA.
 
 ---
 
@@ -137,11 +146,13 @@ Work through these in order before adding new features.
 
 ### Correctness & robustness (do first)
 
-- (none; next is progress/tuning)
+- [x] **Progress durability under errors** – In `download_segments()` process results as they arrive; mark bitmap and persist on each Ok; drain all results and record first error; return error after loop.
+- [x] **Progress coalescing** – Coalesce progress updates every N segments so `try_send()` drops are intentional.
+- [x] **Abort flag** – On non-retryable error (e.g. Storage), signal workers to stop pulling more work.
 
 ### Progress and tuning
 
-- [ ] **Progress output** – Bytes done, ETA, per-connection rate, total rate (no GUI; CLI-friendly). Do after correctness items so improvements can be measured.
+- [x] **Progress output** – Bytes done, ETA, total rate (MiB/s) shown during `ddm run`; throttled to every 500ms. `ProgressStats` in scheduler; CLI prints progress line (done/total MiB, %, rate, ETA).
 
 ### Optional and polish
 

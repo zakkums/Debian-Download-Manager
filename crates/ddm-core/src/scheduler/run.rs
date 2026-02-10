@@ -15,11 +15,15 @@ use crate::host_policy::HostPolicy;
 
 use super::choose;
 use super::execute;
+use super::progress::ProgressStats;
 
 /// Runs a single job: re-validates with HEAD, then downloads only incomplete segments.
 ///
 /// If `force_restart` is true and the remote has changed, metadata and bitmap
 /// are reset from the new HEAD and the full file is re-downloaded.
+///
+/// If `progress_tx` is `Some`, progress stats (bytes done, ETA, rate) are sent
+/// during the download so the caller can display them (e.g. CLI).
 pub async fn run_one_job(
     db: &ResumeDb,
     job_id: i64,
@@ -27,6 +31,7 @@ pub async fn run_one_job(
     cfg: &DdmConfig,
     download_dir: &Path,
     host_policy: &mut HostPolicy,
+    progress_tx: Option<&tokio::sync::mpsc::Sender<ProgressStats>>,
 ) -> Result<()> {
     let mut job = db
         .get_job(job_id)
@@ -127,6 +132,7 @@ pub async fn run_one_job(
         &mut bitmap,
         cfg,
         host_policy,
+        progress_tx,
     )
     .await;
 
@@ -137,12 +143,14 @@ pub async fn run_one_job(
 }
 
 /// Runs the next queued job (smallest id first, FIFO). Returns true if a job was run, false if none queued.
+/// If `progress_tx` is `Some`, progress stats are sent during the download.
 pub async fn run_next_job(
     db: &ResumeDb,
     force_restart: bool,
     cfg: &DdmConfig,
     download_dir: &Path,
     host_policy: &mut HostPolicy,
+    progress_tx: Option<&tokio::sync::mpsc::Sender<ProgressStats>>,
 ) -> Result<bool> {
     let jobs = db.list_jobs().await?;
     let next = jobs
@@ -153,6 +161,6 @@ pub async fn run_next_job(
     let Some(job_id) = next else {
         return Ok(false);
     };
-    run_one_job(db, job_id, force_restart, cfg, download_dir, host_policy).await?;
+    run_one_job(db, job_id, force_restart, cfg, download_dir, host_policy, progress_tx).await?;
     Ok(true)
 }
