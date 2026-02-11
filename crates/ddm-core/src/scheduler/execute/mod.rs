@@ -2,6 +2,7 @@
 
 mod guard;
 mod progress_worker;
+mod run_download;
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -11,7 +12,6 @@ use std::time::{Duration, Instant};
 
 use crate::config::{DdmConfig, DownloadBackend};
 use crate::downloader::DownloadSummary;
-use crate::downloader;
 use crate::resume_db::{JobMetadata, JobState, ResumeDb};
 use crate::retry::RetryPolicy;
 use crate::segmenter;
@@ -20,6 +20,7 @@ use crate::host_policy::HostPolicy;
 
 use self::guard::BudgetGuard;
 use self::progress_worker::run_progress_persistence_loop;
+use self::run_download::run_download_blocking;
 use crate::scheduler::budget::GlobalConnectionBudget;
 use crate::scheduler::progress::ProgressStats;
 
@@ -104,45 +105,31 @@ pub(super) async fn execute_download_phase(
     ));
 
     let mut bitmap_copy = bitmap.clone();
+    let use_multi = cfg.download_backend == Some(DownloadBackend::Multi);
     let (bitmap_result, summary) = {
         let url = url.to_string();
         let headers = headers.clone();
         let segments = segments.to_vec();
         let storage = storage_writer.clone();
-        let max_concurrent = actual_concurrent.max(1);
+        let max_concurrent = actual_concurrent;
         let policy = retry_policy;
         let tx = bitmap_tx.clone();
         let in_flight = Arc::clone(&in_flight_bytes);
-        let use_multi = cfg.download_backend == Some(DownloadBackend::Multi);
         tokio::task::spawn_blocking(move || -> Result<(segmenter::SegmentBitmap, DownloadSummary)> {
             let mut summary = DownloadSummary::default();
-            if use_multi {
-                downloader::multi::download_segments_multi(
-                    &url,
-                    &headers,
-                    &segments,
-                    &storage,
-                    &mut bitmap_copy,
-                    Some(max_concurrent),
-                    Some(&policy),
-                    &mut summary,
-                    Some(&tx),
-                    Some(in_flight),
-                )?;
-            } else {
-                downloader::download_segments(
-                    &url,
-                    &headers,
-                    &segments,
-                    &storage,
-                    &mut bitmap_copy,
-                    Some(max_concurrent),
-                    Some(&policy),
-                    &mut summary,
-                    Some(&tx),
-                    Some(in_flight),
-                )?;
-            }
+            run_download_blocking(
+                &url,
+                &headers,
+                &segments,
+                &storage,
+                &mut bitmap_copy,
+                max_concurrent,
+                &policy,
+                &mut summary,
+                Some(&tx),
+                Some(in_flight),
+                use_multi,
+            )?;
             Ok((bitmap_copy, summary))
         })
         .await
