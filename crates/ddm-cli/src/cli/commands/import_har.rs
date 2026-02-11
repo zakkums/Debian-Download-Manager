@@ -14,6 +14,7 @@ pub async fn run_import_har(db: &ResumeDb, path: &Path, allow_cookies: bool) -> 
         } else {
             Some(spec.headers)
         },
+        download_dir: None,
     };
     let id = db.add_job(&spec.url, &settings).await?;
     println!("Added job {id} for URL: {}", spec.url);

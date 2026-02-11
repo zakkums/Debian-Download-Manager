@@ -48,6 +48,9 @@ pub struct JobSettings {
     /// Optional HTTP headers for this job (e.g. Cookie from HAR import with --allow-cookies).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_headers: Option<std::collections::HashMap<String, String>>,
+    /// Directory where this job's files are (or will be) stored. If set, run uses this instead of the CLI's current directory.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub download_dir: Option<String>,
 }
 
 /// Summary view used by the CLI `status` command.

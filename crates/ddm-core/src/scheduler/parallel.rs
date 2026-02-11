@@ -27,6 +27,7 @@ pub async fn run_jobs_parallel(
     download_dir: PathBuf,
     host_policy: &mut HostPolicy,
     force_restart: bool,
+    overwrite: bool,
     progress_tx: Option<tokio::sync::mpsc::Sender<ProgressStats>>,
     global_budget: Arc<GlobalConnectionBudget>,
     max_concurrent: usize,
@@ -51,11 +52,13 @@ pub async fn run_jobs_parallel(
             let policy = Arc::clone(&shared_policy);
             let tx = progress_tx.clone();
             let budget = Arc::clone(&global_budget);
+            let overwrite = overwrite;
             join_set.spawn(async move {
                 run_one_job_shared(
                     &db,
                     job_id,
                     force_restart,
+                    overwrite,
                     &cfg,
                     &download_dir,
                     policy,

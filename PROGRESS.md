@@ -8,7 +8,7 @@ Use this file to see what's done and what's left. When starting a new chat, shar
 
 - **Done:** Core engine, resume DB, scheduler, downloader (Easy + threads + curl multi backend), safe resume, retry/backoff, progress durability, abort deadlock fix, Range pre-write validation, redirect-safe header capture, saturating budget release, import-har, bench, HostPolicy persistence, global scheduling, docs, integration test, curl multi phase 2 (config `download_backend`, Easy2 + Multi loop).
 - **In progress:** (none)
-- **Next (ROI order):** (none).
+- **Next (ROI order):** See **Roadmap** below — Tier 0 (CLI honesty, overwrites/collisions, download_dir) first.
 
 ---
 
@@ -48,7 +48,7 @@ Everything below is implemented and merged.
 - [x] **Range pre-write validation** – First write_function checks headers (parse_http_status + parse_content_range); if not 206 or mismatch, return 0 to abort before writing any byte.
 - [x] **Progress durability under errors** – Process results as they arrive; mark bitmap and persist on each Ok; drain and record first error; return error after loop.
 - [x] **Progress coalescing** – Coalesce every N completions; abort flag on non-retryable error.
-- [x] **Redirect-safe header capture** – With `follow_location(true)`, curl sends headers for each response (e.g. 302 then 206). We clear the header vector when a line starts with `HTTP/` so only the final response’s headers are kept; `parse_http_status` / `parse_content_range` then see 206 and correct Content-Range, avoiding false InvalidRangeResponse on CDN/file-site redirects.
+- [x] **Redirect-safe header capture** – With `follow_location(true)`, curl sends headers for each response (e.g. 302 then 206). We clear the header vector when a line starts with `HTTP/` so only the final response's headers are kept; `parse_http_status` / `parse_content_range` then see 206 and correct Content-Range, avoiding false InvalidRangeResponse on CDN/file-site redirects.
 - [x] **Saturating budget release** – `GlobalConnectionBudget::release()` implemented with a compare-exchange loop so it saturates at 0 and is safe under concurrent use (no underflow when multiple jobs run in parallel).
 
 ### Features
@@ -73,22 +73,128 @@ Everything below is implemented and merged.
 
 ---
 
+## Gaps / issues (will bite you next)
+
+### A) CLI semantics mismatch (user-facing correctness)
+
+1. **ddm remove does not remove "data"**  
+   CLI help says: "Remove a job (and optionally its data)", but `crates/ddm-cli/src/cli/commands/remove.rs` only calls `db.remove_job(id)`.
+
+2. **ddm pause is not a real pause**  
+   Pause only sets DB state to paused and does not signal an in-flight download to stop. In the current design (single foreground `ddm run` process), there's no IPC/control channel, so this is expected—but the CLI implies stronger behavior.
+
+**Fix direction:** either (a) adjust CLI text to be honest ("affects next run"), or (b) introduce a long-running daemon + IPC so pause/resume/remove can affect running work.
+
+### B) Filename/path collisions and overwrite risk
+
+- `url_model::derive_filename()` produces a single filename.
+- Scheduler stores filename strings, not absolute paths.
+- Storage finalize uses `std::fs::rename(temp, final)` which replaces existing files on Unix.
+
+**Implications:** Two jobs with the same derived name will collide. Running `ddm run` from different directories can cause "resume" to silently start fresh because the .part file isn't in that directory. Existing final files can be overwritten.
+
+**Fix direction:** Store a per-job `download_dir` and resolved full paths in job settings, and implement a collision strategy (suffixing, job-id prefixing, or "fail if exists unless --overwrite").
+
+### C) Hard failure on non-Range servers
+
+In `scheduler/run/single.rs` (and shared run path): `if !head.accept_ranges → bail "server does not support Range requests"`. DDM cannot download from servers without Accept-Ranges, without Content-Length (chunked/dynamic), or when Range is supported but HEAD is blocked.
+
+**Fix direction:** Fallback path: if no ranges → single-stream GET (no Range header), no segmented resume (or resume via temp file size if safe). If no Content-Length → stream to disk without preallocation, treat as non-resumable unless server supports range and size can be inferred later.
+
+### D) Panics in the threaded downloader control plane
+
+In `crates/ddm-core/src/downloader/run.rs`: `rx.recv().expect("worker result")`, `h.join().unwrap_or_else(|e| panic!(...))`. If any worker panics or the channel breaks, the whole program panics.
+
+**Fix direction:** Convert to Result propagation: treat worker panics as SegmentError::Internal (or similar); join failures → anyhow::Error with context.
+
+### E) Docs drift (small, but important)
+
+`docs_http_client_choice.md` claims "no curl::multi usage", but the codebase implements a multi backend. Update the doc (or split into "default backend" vs "optional backend").
+
+### F) DB schema/migrations are "v0.1 OK", but not future-proof
+
+`resume_db/db.rs` creates the table via `CREATE TABLE IF NOT EXISTS ...` with no schema versioning. Fine early; once you add download directory, per-job override filename, per-segment metrics, priority/queue ordering, you'll want explicit migrations.
+
+**Fix direction:** Add a lightweight schema version table or switch to sqlx migrations.
+
+### G) Privacy/security: HAR cookie persistence is sensitive
+
+Cookies are gated behind `--allow-cookies`, but when stored in SQLite unencrypted this becomes a credential store.
+
+**Fix direction options:** (1) Safest: don't persist cookies—use only for current run unless user explicitly exports a "profile" file. (2) Pragmatic: persist, but isolate DB permissions (0600), avoid logging config/settings, add prominent warnings. (3) Advanced: encrypt at rest (key management complexity).
+
+---
+
+## Roadmap (prioritized — what's next)
+
+### Tier 0 — Fix "user trust" issues (highest ROI)
+
+- **Make CLI text match reality**
+  - Update **remove** help or implement `--delete-files`.
+  - Update **pause** help to clarify it only affects scheduling unless you build a daemon.
+- **Prevent overwrites + collisions**
+  - Add collision strategy: `{name} (1).ext` or `{job_id}-{name}`.
+  - Add `--overwrite` explicit flag.
+- **Store download directory per job**
+  - Add `download_dir` to JobSettings (settings_json) and use it consistently. Fixes "resume from a different directory breaks".
+
+**Acceptance criteria:** Two identical URLs added twice don't clobber each other. Resuming works even if you run `ddm run` from another directory (job knows where its files live).
+
+### Tier 1 — Make it "work everywhere"
+
+- **Non-range fallback**  
+  If Accept-Ranges missing: single GET download path. If Content-Length missing: stream to disk without prealloc; disable segmented resume.
+- **HEAD blocked fallback**  
+  If HEAD fails but GET works: probe via GET headers (or a small ranged GET if supported).
+
+**Acceptance criteria:** You can download from a basic server that doesn't advertise ranges. DDM handles "HEAD not allowed" gracefully.
+
+### Tier 2 — Use the config fields you already exposed
+
+- **Enforce max_bytes_per_sec** — e.g. libcurl receive speed limiting per easy handle; global or per-job (global simplest).
+- **Use segment_buffer_bytes** — Set curl buffer size per easy handle where supported.
+
+**Acceptance criteria:** Config changes demonstrably affect throughput and/or memory.
+
+### Tier 3 — "Real download manager" control plane
+
+- **True pause/resume/cancel**  
+  Either: (1) daemon (`ddm daemon`) + local IPC socket (Unix domain), or (2) single-process "interactive" mode that listens for commands while downloading. Minimum viable: `ddm run` starts a control socket; `ddm pause <id>` sends message to stop scheduling new segments + triggers abort flag.
+
+**Acceptance criteria:** Pause stops network activity for a running job within ~1s. Resume continues without losing completed segments.
+
+### Tier 4 — Packaging and usability
+
+- **Project basics**
+  - README.md with install/run examples + config explanation.
+  - LICENSE file.
+  - rust-toolchain.toml (pin toolchain; edition 2024 is fine via rustup but not Debian's old rustc).
+- **Completions + manpage**  
+  Clap can generate shell completions; add manpage generation.
+
+---
+
 ## In progress
 
 - (none)
 
 ---
 
-## Done (this session)
+## Not started (next in ROI order)
 
-- [x] **Curl multi – phase 2** – Implemented curl::multi handle; single-threaded event loop, Easy2 + Handler per segment; config `download_backend` (easy | multi); parity with Easy+threads (206/Content-Range, progress, bitmap). No per-segment retry in multi yet.
-- [x] **Execute module &lt;200 lines** – Split `scheduler/execute/mod.rs` (was 201 lines) into `execute/run_download.rs`; all source files now &lt;200 lines per code layout guideline.
+- Tier 1: Non-range fallback, HEAD blocked fallback.
+- Then Tier 2 → Tier 4 per roadmap above.
 
 ---
 
-## Not started (in priority order, best ROI)
+## Done (this session)
 
-- (none)
+- [x] **Tier 0: download_dir per job** – `JobSettings.download_dir` (stored in settings_json); CLI `add` accepts `--download-dir` (default: current dir); run path uses job's download_dir when set so resume works from any working directory.
+- [x] **Tier 0: Collision strategy** – `url_model::unique_filename_among()`; `ResumeDb::list_final_filenames_in_dir()`; run path resolves unique final name when needs_metadata so two identical URLs get e.g. `file.iso` and `file (1).iso`.
+- [x] **Tier 0: --overwrite** – CLI `run --overwrite`; run fails if final file exists unless `--overwrite`.
+- [x] **Tier 0: CLI text match reality** – Remove: help updated; `--delete-files` and `--download-dir` implemented. Pause: help updated to state it only affects scheduling.
+- [x] **Curl multi – phase 2** – Implemented curl::multi handle; single-threaded event loop, Easy2 + Handler per segment; config `download_backend` (easy | multi); parity with Easy+threads (206/Content-Range, progress, bitmap). Per-segment retry in multi added later.
+- [x] **Execute module &lt;200 lines** – Split `scheduler/execute/mod.rs` (was 201 lines) into `execute/run_download.rs`; all source files now &lt;200 lines per code layout guideline.
 
 ---
 
@@ -100,7 +206,7 @@ Everything below is implemented and merged.
 
 ## Done (retry in multi backend)
 
-- [x] **Retry in multi backend** – Per-segment retry with backoff inside multi loop; optional `RetryPolicy` passed from `download_segments_multi`; retry_after queue with `Instant`; refill from pending and retry_after; `next_retry_wait_ms` for wait timing; `refill.rs` and `result.rs` keep `run.rs` < 200 lines.
+- [x] **Retry in multi backend** – Per-segment retry with backoff inside multi loop; optional `RetryPolicy` passed from `download_segments_multi`; retry_after queue with `Instant`; refill from pending and retry_after; `next_retry_wait_ms` for wait timing; `refill.rs` and `result.rs` keep `run.rs` &lt; 200 lines.
 
 ---
 
@@ -124,7 +230,7 @@ Docs said "libcurl multi"; code uses Easy + threads. ARCHITECTURE and docs_http_
 
 ### Redirect header false-fail (fixed)
 
-With `follow_location(true)`, curl’s header callback receives headers for every response (e.g. 302 redirect then 206). We were storing all lines and `parse_http_status(headers.first())` saw the first status (302), so the pre-write check aborted with InvalidRangeResponse even when the final response was 206. Fix: in the header callback, when a line starts with `HTTP/`, clear the header vector then push that line so “current headers” always correspond to the final response.
+With `follow_location(true)`, curl's header callback receives headers for every response (e.g. 302 redirect then 206). We were storing all lines and `parse_http_status(headers.first())` saw the first status (302), so the pre-write check aborted with InvalidRangeResponse even when the final response was 206. Fix: in the header callback, when a line starts with `HTTP/`, clear the header vector then push that line so "current headers" always correspond to the final response.
 
 ### Budget release underflow (fixed)
 

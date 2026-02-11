@@ -32,6 +32,7 @@ async fn multi_segment_download_completes_and_file_matches() {
         &db,
         job_id,
         false,
+        false,
         &cfg,
         download_dir.path(),
         &mut host_policy,
@@ -75,6 +76,7 @@ async fn multi_backend_download_completes_and_file_matches() {
     scheduler::run_one_job(
         &db,
         job_id,
+        false,
         false,
         &cfg,
         download_dir.path(),

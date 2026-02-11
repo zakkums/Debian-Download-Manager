@@ -39,6 +39,47 @@ impl ResumeDb {
         Ok(out)
     }
 
+    /// Returns final_filename of all jobs that use the given download_dir (for collision detection).
+    /// If download_dir is None, only jobs with no stored download_dir are considered (legacy).
+    /// exclude_job_id, if set, is omitted from the list (e.g. current job when updating metadata).
+    pub async fn list_final_filenames_in_dir(
+        &self,
+        download_dir: Option<&str>,
+        exclude_job_id: Option<JobId>,
+    ) -> Result<Vec<String>> {
+        let rows = sqlx::query(
+            r#"SELECT id, final_filename, settings_json FROM jobs"#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut out = Vec::new();
+        for row in rows {
+            let id: i64 = row.get("id");
+            if exclude_job_id == Some(id) {
+                continue;
+            }
+            let final_filename: Option<String> = row.get("final_filename");
+            let settings_json: Option<String> = row.get("settings_json");
+            let job_dir = settings_json
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .and_then(|s| serde_json::from_str::<JobSettings>(s).ok())
+                .and_then(|s| s.download_dir);
+            let same_dir = match (download_dir, job_dir.as_deref()) {
+                (None, None) => true,
+                (Some(a), Some(b)) => a == b,
+                _ => false,
+            };
+            if same_dir {
+                if let Some(name) = final_filename {
+                    out.push(name);
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// Fetch a single job row with full metadata for the scheduler.
     pub async fn get_job(&self, id: JobId) -> Result<Option<JobDetails>> {
         let row = sqlx::query(

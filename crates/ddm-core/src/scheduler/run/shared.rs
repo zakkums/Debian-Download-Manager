@@ -26,6 +26,7 @@ pub async fn run_one_job_shared(
     db: &ResumeDb,
     job_id: i64,
     force_restart: bool,
+    overwrite: bool,
     cfg: &DdmConfig,
     download_dir: &Path,
     host_policy: Arc<tokio::sync::Mutex<HostPolicy>>,
@@ -81,8 +82,24 @@ pub async fn run_one_job_shared(
         choose::choose_segment_count(total_size, cfg, &url, &policy)
     };
 
-    let final_name =
+    let candidate_name =
         url_model::derive_filename(&url, head.content_disposition.as_deref());
+    let effective_dir_str = job
+        .settings
+        .download_dir
+        .as_deref()
+        .or_else(|| download_dir.to_str());
+    let final_name = if job.total_size.is_none() || force_restart || validation.is_err() {
+        let existing = db
+            .list_final_filenames_in_dir(effective_dir_str, Some(job_id))
+            .await?;
+        url_model::unique_filename_among(&candidate_name, &existing)
+    } else {
+        job.final_filename
+            .as_deref()
+            .unwrap_or(&candidate_name)
+            .to_string()
+    };
     let temp_name = storage::temp_path(Path::new(&final_name));
     let temp_name_str = temp_name.to_string_lossy().to_string();
 
@@ -112,16 +129,29 @@ pub async fn run_one_job_shared(
     let mut bitmap =
         segmenter::SegmentBitmap::from_bytes(&job.completed_bitmap, segment_count_u);
 
-    let temp_path = download_dir.join(
+    let effective_dir = job
+        .settings
+        .download_dir
+        .as_deref()
+        .map(std::path::Path::new)
+        .unwrap_or(download_dir);
+    let temp_path = effective_dir.join(
         job.temp_filename
             .as_deref()
             .unwrap_or(&temp_name_str),
     );
-    let final_path = download_dir.join(
+    let final_path = effective_dir.join(
         job.final_filename
             .as_deref()
             .unwrap_or(&final_name),
     );
+
+    if final_path.exists() && !overwrite {
+        anyhow::bail!(
+            "final file already exists: {} (use --overwrite to replace)",
+            final_path.display()
+        );
+    }
 
     db.set_state(job_id, JobState::Running).await?;
 

@@ -44,6 +44,33 @@ pub fn derive_filename(url: &str, content_disposition: Option<&str>) -> String {
     }
 }
 
+/// Returns a filename that does not collide with any in `existing`.
+/// If `candidate` is not in `existing`, returns it as-is; otherwise returns
+/// `stem (1).ext`, `stem (2).ext`, etc. (or `stem (1)` when there is no extension).
+pub fn unique_filename_among(candidate: &str, existing: &[String]) -> String {
+    if !existing.iter().any(|s| s == candidate) {
+        return candidate.to_string();
+    }
+    let (stem, ext) = match candidate.rfind('.') {
+        Some(i) if i > 0 => {
+            let (s, e) = candidate.split_at(i);
+            (s, e)
+        }
+        _ => (candidate, ""),
+    };
+    for n in 1.. {
+        let name = if ext.is_empty() {
+            format!("{} ({})", stem, n)
+        } else {
+            format!("{} ({}){}", stem, n, ext)
+        };
+        if !existing.iter().any(|s| s == &name) {
+            return name;
+        }
+    }
+    unreachable!("unique_filename_among: infinite loop")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,5 +132,37 @@ mod tests {
     fn derive_filename_reserved_names_fallback() {
         assert_eq!(derive_filename("https://example.com/.", None), "download.bin");
         assert_eq!(derive_filename("https://example.com/..", None), "download.bin");
+    }
+
+    #[test]
+    fn unique_filename_among_no_collision() {
+        assert_eq!(
+            unique_filename_among("file.iso", &[]),
+            "file.iso"
+        );
+        assert_eq!(
+            unique_filename_among("file.iso", &["other.zip".to_string()]),
+            "file.iso"
+        );
+    }
+
+    #[test]
+    fn unique_filename_among_collision() {
+        assert_eq!(
+            unique_filename_among("file.iso", &["file.iso".to_string()]),
+            "file (1).iso"
+        );
+        assert_eq!(
+            unique_filename_among("file.iso", &["file.iso".to_string(), "file (1).iso".to_string()]),
+            "file (2).iso"
+        );
+    }
+
+    #[test]
+    fn unique_filename_among_no_extension() {
+        assert_eq!(
+            unique_filename_among("download", &["download".to_string()]),
+            "download (1)"
+        );
     }
 }

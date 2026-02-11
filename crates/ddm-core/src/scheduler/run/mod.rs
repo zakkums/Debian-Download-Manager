@@ -32,6 +32,7 @@ pub async fn next_queued_job_id(db: &ResumeDb) -> Result<Option<i64>> {
 pub async fn run_next_job(
     db: &ResumeDb,
     force_restart: bool,
+    overwrite: bool,
     cfg: &DdmConfig,
     download_dir: &Path,
     host_policy: &mut HostPolicy,
@@ -45,6 +46,7 @@ pub async fn run_next_job(
         db,
         job_id,
         force_restart,
+        overwrite,
         cfg,
         download_dir,
         host_policy,

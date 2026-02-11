@@ -15,6 +15,7 @@ pub async fn run_scheduler(
     download_dir: &Path,
     force_restart: bool,
     jobs: usize,
+    overwrite: bool,
 ) -> Result<()> {
     let recovered = db.recover_running_jobs().await?;
     if recovered > 0 {
@@ -70,6 +71,7 @@ pub async fn run_scheduler(
             download_dir.to_path_buf(),
             &mut host_policy,
             force_restart,
+            overwrite,
             Some(progress_tx),
             Arc::clone(&global_budget),
             jobs,
@@ -81,6 +83,7 @@ pub async fn run_scheduler(
         while scheduler::run_next_job(
             db,
             force_restart,
+            overwrite,
             cfg,
             download_dir,
             &mut host_policy,
