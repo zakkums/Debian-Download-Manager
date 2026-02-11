@@ -8,22 +8,47 @@ use std::net::TcpListener;
 use std::sync::Arc;
 use std::thread;
 
+#[derive(Debug, Clone, Copy)]
+pub struct RangeServerOptions {
+    /// If false, HEAD returns 405 (simulates servers that block HEAD).
+    pub head_allowed: bool,
+    /// If false, GET ignores Range and always returns 200 with the full body.
+    pub support_ranges: bool,
+    /// If false, omit `Accept-Ranges: bytes` header even if ranges work.
+    pub advertise_ranges: bool,
+}
+
+impl Default for RangeServerOptions {
+    fn default() -> Self {
+        Self {
+            head_allowed: true,
+            support_ranges: true,
+            advertise_ranges: true,
+        }
+    }
+}
+
 /// Starts a server in a background thread serving `body`. Returns the base URL
 /// (e.g. "http://127.0.0.1:12345/"). The server runs until the process exits.
 pub fn start(body: Vec<u8>) -> String {
+    start_with_options(body, RangeServerOptions::default())
+}
+
+/// Like `start` but allows customizing server behavior (HEAD blocked, ranges missing, etc.).
+pub fn start_with_options(body: Vec<u8>, opts: RangeServerOptions) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let port = listener.local_addr().unwrap().port();
     let body = Arc::new(body);
     thread::spawn(move || {
         for stream in listener.incoming().flatten() {
             let body = Arc::clone(&body);
-            thread::spawn(move || handle(stream, &body));
+            thread::spawn(move || handle(stream, &body, opts));
         }
     });
     format!("http://127.0.0.1:{}/", port)
 }
 
-fn handle(mut stream: std::net::TcpStream, body: &[u8]) {
+fn handle(mut stream: std::net::TcpStream, body: &[u8], opts: RangeServerOptions) {
     let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
     let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(2)));
     let mut buf = [0u8; 8192];
@@ -39,15 +64,27 @@ fn handle(mut stream: std::net::TcpStream, body: &[u8]) {
     let (method, range) = parse_request(request);
     let total = body.len() as u64;
     if method.eq_ignore_ascii_case("HEAD") {
+        if !opts.head_allowed {
+            let _ = stream.write_all(b"HTTP/1.1 405 Method Not Allowed\r\n\r\n");
+            return;
+        }
+        let accept_ranges = if opts.advertise_ranges && opts.support_ranges {
+            "Accept-Ranges: bytes\r\n"
+        } else {
+            ""
+        };
         let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nAccept-Ranges: bytes\r\n\r\n",
-            total
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n{}\
+\r\n",
+            total, accept_ranges
         );
         let _ = stream.write_all(response.as_bytes());
         return;
     }
     if method.eq_ignore_ascii_case("GET") {
-        let (status, range_header, slice) = if let Some((start, end_incl)) = range {
+        let use_range = opts.support_ranges;
+        let (status, range_header, slice) = if use_range {
+            if let Some((start, end_incl)) = range {
             let start = start.min(total);
             let end_incl = end_incl.min(total.saturating_sub(1));
             if start > end_incl {
@@ -66,6 +103,13 @@ fn handle(mut stream: std::net::TcpStream, body: &[u8]) {
                     slice,
                 )
             }
+            } else {
+            (
+                "200 OK",
+                format!("bytes 0-{}/{}", total.saturating_sub(1), total),
+                body,
+            )
+            }
         } else {
             (
                 "200 OK",
@@ -73,11 +117,15 @@ fn handle(mut stream: std::net::TcpStream, body: &[u8]) {
                 body,
             )
         };
+        let accept_ranges = if opts.advertise_ranges && opts.support_ranges {
+            "Accept-Ranges: bytes\r\n"
+        } else {
+            ""
+        };
         let response = format!(
-            "HTTP/1.1 {}\r\nContent-Length: {}\r\nContent-Range: {}\r\nAccept-Ranges: bytes\r\n\r\n",
-            status,
-            slice.len(),
-            range_header
+            "HTTP/1.1 {}\r\nContent-Length: {}\r\nContent-Range: {}\r\n{}\
+\r\n",
+            status, slice.len(), range_header, accept_ranges
         );
         let _ = stream.write_all(response.as_bytes());
         let _ = stream.write_all(slice);

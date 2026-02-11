@@ -8,6 +8,7 @@
 use crate::retry::SegmentError;
 use crate::segmenter::Segment;
 use crate::storage::StorageWriter;
+use super::CurlOptions;
 use std::collections::HashMap;
 use std::str;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -29,6 +30,7 @@ pub(super) fn download_one_segment(
     segment: &Segment,
     storage: &StorageWriter,
     in_flight: InFlightRef,
+    curl: CurlOptions,
 ) -> SegmentResult {
     let bytes_written = Arc::new(AtomicU64::new(0));
     let bytes_written_in_cb = Arc::clone(&bytes_written);
@@ -46,6 +48,12 @@ pub(super) fn download_one_segment(
     let mut easy = curl::easy::Easy::new();
     easy.url(url).map_err(SegmentError::Curl)?;
     easy.follow_location(true).map_err(SegmentError::Curl)?;
+    if let Some(speed) = curl.max_recv_speed {
+        easy.max_recv_speed(speed).map_err(SegmentError::Curl)?;
+    }
+    if let Some(sz) = curl.buffer_size {
+        easy.buffer_size(sz).map_err(SegmentError::Curl)?;
+    }
     easy.connect_timeout(Duration::from_secs(30))
         .map_err(SegmentError::Curl)?;
     easy.low_speed_limit(1024).map_err(SegmentError::Curl)?;

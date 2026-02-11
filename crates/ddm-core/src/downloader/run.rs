@@ -11,6 +11,7 @@ use crate::segmenter::{Segment, SegmentBitmap};
 use crate::storage::StorageWriter;
 
 use super::segment;
+use super::CurlOptions;
 use super::DownloadSummary;
 use super::SegmentResult;
 
@@ -30,6 +31,7 @@ pub(super) fn run_concurrent(
     summary_out: &mut DownloadSummary,
     progress_tx: Option<&tokio::sync::mpsc::Sender<Vec<u8>>>,
     in_flight_bytes: Option<Arc<Vec<AtomicU64>>>,
+    curl: CurlOptions,
 ) -> Result<()> {
     let count = incomplete.len();
     let work: Arc<Mutex<VecDeque<(usize, Segment)>>> =
@@ -46,6 +48,7 @@ pub(super) fn run_concurrent(
         let h = headers.clone();
         let st = storage.clone();
         let policy = retry_policy;
+        let curl_opts = curl;
         let in_flight = in_flight_bytes.as_ref().map(Arc::clone);
         handles.push(std::thread::spawn(move || {
             loop {
@@ -59,9 +62,9 @@ pub(super) fn run_concurrent(
                 let in_flight_seg = in_flight.as_ref().map(|v| (Arc::clone(v), index));
                 let res: SegmentResult = match policy.as_ref() {
                     Some(p) => run_with_retry(p, || {
-                        segment::download_one_segment(&u, &h, &segment, &st, in_flight_seg.clone())
+                        segment::download_one_segment(&u, &h, &segment, &st, in_flight_seg.clone(), curl_opts)
                     }),
-                    None => segment::download_one_segment(&u, &h, &segment, &st, in_flight_seg),
+                    None => segment::download_one_segment(&u, &h, &segment, &st, in_flight_seg, curl_opts),
                 };
                 let _ = tx.send((index, res));
             }
@@ -137,6 +140,7 @@ pub(super) fn run_unbounded(
     summary_out: &mut DownloadSummary,
     progress_tx: Option<&tokio::sync::mpsc::Sender<Vec<u8>>>,
     in_flight_bytes: Option<Arc<Vec<AtomicU64>>>,
+    curl: CurlOptions,
 ) -> Result<()> {
     let results: Vec<(usize, SegmentResult)> = incomplete
         .into_iter()
@@ -145,13 +149,14 @@ pub(super) fn run_unbounded(
             let h = headers.clone();
             let st = storage.clone();
             let policy = retry_policy.clone();
+            let curl_opts = curl;
             let in_flight = in_flight_bytes.as_ref().map(|v| (Arc::clone(v), index));
             let res = std::thread::spawn(move || {
                 match policy.as_ref() {
                     Some(p) => run_with_retry(p, || {
-                        segment::download_one_segment(&u, &h, &segment, &st, in_flight.clone())
+                        segment::download_one_segment(&u, &h, &segment, &st, in_flight.clone(), curl_opts)
                     }),
-                    None => segment::download_one_segment(&u, &h, &segment, &st, in_flight),
+                    None => segment::download_one_segment(&u, &h, &segment, &st, in_flight, curl_opts),
                 }
             })
             .join()

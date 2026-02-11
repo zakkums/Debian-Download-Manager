@@ -2,6 +2,7 @@
 
 mod shared;
 mod single;
+mod fallback;
 
 use anyhow::Result;
 use std::path::Path;

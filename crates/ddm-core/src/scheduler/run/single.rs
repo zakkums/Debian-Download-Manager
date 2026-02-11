@@ -51,23 +51,15 @@ pub async fn run_one_job(
     let head = tokio::task::spawn_blocking({
         let url = url.clone();
         let headers = headers.clone();
-        move || fetch_head::probe(&url, &headers)
+        move || fetch_head::probe_best_effort(&url, &headers)
     })
     .await
     .context("probe task join")?
-    .context("HEAD request failed")?;
+    .context("probe failed")?;
 
     host_policy
         .record_head_result(&url, &head)
         .context("update host policy from HEAD")?;
-
-    if !head.accept_ranges {
-        anyhow::bail!("server does not support Range requests (Accept-Ranges: bytes)");
-    }
-
-    let total_size = head
-        .content_length
-        .ok_or_else(|| anyhow::anyhow!("server did not send Content-Length"))?;
 
     let validation = safe_resume::validate_for_resume(&job, &head);
     if let Err(ref e) = validation {
@@ -77,8 +69,6 @@ pub async fn run_one_job(
         tracing::info!("force-restart: discarding progress and re-downloading (remote changed)");
     }
 
-    let segment_count =
-        choose::choose_segment_count(total_size, cfg, &url, host_policy);
     let candidate_name =
         url_model::derive_filename(&url, head.content_disposition.as_deref());
     let effective_dir_str = job
@@ -104,8 +94,32 @@ pub async fn run_one_job(
         || force_restart
         || validation.is_err();
 
+    let segmentable = head.accept_ranges && head.content_length.is_some();
+    if !segmentable {
+        return super::fallback::run_single_stream(
+            db,
+            job_id,
+            &mut job,
+            &url,
+            &headers,
+            &head,
+            overwrite,
+            cfg,
+            download_dir,
+            &final_name,
+            &temp_name_str,
+            needs_metadata,
+        )
+        .await;
+    }
+
+    let total_size = head
+        .content_length
+        .ok_or_else(|| anyhow::anyhow!("server did not send Content-Length"))?;
+    let segment_count =
+        choose::choose_segment_count(total_size, cfg, &url, host_policy);
+
     if needs_metadata {
-        let _segments = segmenter::plan_segments(total_size, segment_count);
         let bitmap = segmenter::SegmentBitmap::new(segment_count);
         let meta = JobMetadata {
             final_filename: Some(final_name.clone()),

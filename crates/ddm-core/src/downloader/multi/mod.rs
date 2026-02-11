@@ -17,6 +17,7 @@ use crate::segmenter::{Segment, SegmentBitmap};
 use crate::storage::StorageWriter;
 
 use super::DownloadSummary;
+use super::CurlOptions;
 
 /// Runs segment downloads via the curl multi backend (Easy2 + Multi handle).
 /// When retry_policy is Some, retryable segment failures are retried with backoff.
@@ -31,6 +32,7 @@ pub fn download_segments_multi(
     summary_out: &mut DownloadSummary,
     progress_tx: Option<&tokio::sync::mpsc::Sender<Vec<u8>>>,
     in_flight_bytes: Option<Arc<Vec<AtomicU64>>>,
+    curl: CurlOptions,
 ) -> Result<()> {
     let incomplete: Vec<(usize, Segment)> = segments
         .iter()
@@ -57,6 +59,7 @@ pub fn download_segments_multi(
         progress_tx,
         in_flight_bytes,
         retry_policy.copied(),
+        curl,
     )
 }
 
@@ -91,6 +94,7 @@ mod tests {
             &mut summary,
             None,
             None,
+            CurlOptions::default(),
         );
         assert!(result.is_ok(), "multi returns Ok when no segments to download");
     }

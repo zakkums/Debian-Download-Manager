@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crate::downloader::DownloadSummary;
 use crate::downloader;
+use crate::downloader::CurlOptions;
 use crate::retry::RetryPolicy;
 use crate::segmenter;
 use crate::storage;
@@ -22,6 +23,7 @@ pub(super) fn run_download_blocking(
     bitmap_tx: Option<&tokio::sync::mpsc::Sender<Vec<u8>>>,
     in_flight: Option<Arc<Vec<std::sync::atomic::AtomicU64>>>,
     use_multi: bool,
+    curl: CurlOptions,
 ) -> anyhow::Result<()> {
     let max_concurrent = max_concurrent.max(1);
     if use_multi {
@@ -36,6 +38,7 @@ pub(super) fn run_download_blocking(
             summary,
             bitmap_tx,
             in_flight,
+            curl,
         )
     } else {
         downloader::download_segments(
@@ -49,6 +52,7 @@ pub(super) fn run_download_blocking(
             summary,
             bitmap_tx,
             in_flight,
+            curl,
         )
     }
 }

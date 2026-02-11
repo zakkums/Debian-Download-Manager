@@ -84,6 +84,7 @@ pub fn run_bench(
             &mut summary,
             None,
             None,
+            downloader::CurlOptions::default(),
         );
         let elapsed = start.elapsed().as_secs_f64();
 

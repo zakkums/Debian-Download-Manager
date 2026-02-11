@@ -3,6 +3,7 @@
 mod guard;
 mod progress_worker;
 mod run_download;
+mod single;
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -21,6 +22,7 @@ use crate::host_policy::HostPolicy;
 use self::guard::BudgetGuard;
 use self::progress_worker::run_progress_persistence_loop;
 use self::run_download::run_download_blocking;
+pub(super) use self::single::execute_single_download_phase;
 use crate::scheduler::budget::GlobalConnectionBudget;
 use crate::scheduler::progress::ProgressStats;
 
@@ -80,6 +82,12 @@ pub(super) async fn execute_download_phase(
         base_delay: Duration::from_secs_f64(r.base_delay_secs),
         max_delay: Duration::from_secs(r.max_delay_secs),
     }).unwrap_or_else(RetryPolicy::default);
+
+    let curl_opts = crate::downloader::CurlOptions::per_handle(
+        cfg.max_bytes_per_sec,
+        actual_concurrent,
+        cfg.segment_buffer_bytes,
+    );
     let bytes_this_run: u64 = segments
         .iter()
         .enumerate()
@@ -115,6 +123,7 @@ pub(super) async fn execute_download_phase(
         let policy = retry_policy;
         let tx = bitmap_tx.clone();
         let in_flight = Arc::clone(&in_flight_bytes);
+        let curl = curl_opts;
         tokio::task::spawn_blocking(move || -> Result<(segmenter::SegmentBitmap, DownloadSummary)> {
             let mut summary = DownloadSummary::default();
             run_download_blocking(
@@ -129,6 +138,7 @@ pub(super) async fn execute_download_phase(
                 Some(&tx),
                 Some(in_flight),
                 use_multi,
+                curl,
             )?;
             Ok((bitmap_copy, summary))
         })

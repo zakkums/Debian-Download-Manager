@@ -7,9 +7,11 @@
 
 mod run;
 mod segment;
+mod single;
 
 /// Curl multi backend (phase 1: skeleton; phase 2: curl::multi implementation).
 pub mod multi;
+pub use single::download_single;
 
 use anyhow::Result;
 use crate::retry::{RetryPolicy, SegmentError};
@@ -21,6 +23,27 @@ use std::sync::Arc;
 
 /// Result of a single segment download (used for retry classification).
 pub type SegmentResult = Result<(), SegmentError>;
+
+/// Curl/libcurl tuning options applied per handle.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CurlOptions {
+    /// Maximum receive speed (bytes/sec) for this curl handle.
+    pub max_recv_speed: Option<u64>,
+    /// Curl receive buffer size (bytes) for this curl handle.
+    pub buffer_size: Option<usize>,
+}
+
+impl CurlOptions {
+    /// Derive per-handle options from a global cap and concurrency.
+    pub fn per_handle(global_max_bytes_per_sec: Option<u64>, concurrency: usize, buffer_size: Option<usize>) -> Self {
+        let concurrency_u = (concurrency.max(1)) as u64;
+        let max_recv_speed = global_max_bytes_per_sec.map(|bps| (bps + concurrency_u - 1) / concurrency_u);
+        Self {
+            max_recv_speed,
+            buffer_size,
+        }
+    }
+}
 
 /// Summary of a download run for adaptive policy: throttle and error counts.
 #[derive(Debug, Clone, Default)]
@@ -46,6 +69,7 @@ pub fn download_segments(
     summary_out: &mut DownloadSummary,
     progress_tx: Option<&tokio::sync::mpsc::Sender<Vec<u8>>>,
     in_flight_bytes: Option<Arc<Vec<AtomicU64>>>,
+    curl: CurlOptions,
 ) -> Result<()> {
     let incomplete: Vec<(usize, Segment)> = segments
         .iter()
@@ -78,6 +102,7 @@ pub fn download_segments(
             summary_out,
             progress_tx,
             in_flight_bytes,
+            curl,
         )
     } else {
         run::run_unbounded(
@@ -91,6 +116,7 @@ pub fn download_segments(
             summary_out,
             progress_tx,
             in_flight_bytes,
+            curl,
         )
     }
 }
