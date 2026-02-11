@@ -36,6 +36,30 @@ Use this file to see what's done and what's left. When starting a new chat, shar
 
 - README.md, LICENSE, rust-toolchain pinning, completions/manpage.
 
+### High-ROI issues and fixes (historical + backlog)
+
+- **A) Parallel scheduler race (duplicate job starts)**  
+  - **Problem**: `run_jobs_parallel` repeatedly calls `next_queued_job_id()` and spawns tasks, but jobs are not atomically claimed; multiple workers can start the same queued job concurrently, risking duplicate writes and corrupt finalization.  
+  - **Fix direction**: add an atomic "claim next job" DB operation (e.g. a transaction that selects the next queued id and immediately sets state to `running`), reusing the existing `recover_running_jobs()` model. **Status**: **TODO**.
+- **B) `download_dir` not persisted per job**  
+  - **Problem**: resumable jobs depended on the caller’s current working directory instead of the job’s own directory.  
+  - **Fix direction**: store `download_dir` in `JobSettings` at `ddm add` time and always resolve paths from that directory. **Status**: **DONE** (see "Tier 0: download_dir per job").
+- **C) CLI help vs behavior mismatch (pause/remove)**  
+  - **Problem**: CLI text implied true runtime control, but commands only affected DB state and future scheduling.  
+  - **Fix direction**: clarify help text until a real control plane exists. **Status**: **DONE** (Tier 0: CLI text match reality; Tier 3 will add real control).
+- **D) File collisions and overwrites**  
+  - **Problem**: naive `rename` could overwrite existing files or collide when two jobs derive the same filename.  
+  - **Fix direction**: use `unique_filename_among()` and require explicit `--overwrite`. **Status**: **DONE** (Tier 0: collision strategy + `--overwrite`).
+- **E) Non-Range / HEAD-blocked servers hard-fail**  
+  - **Problem**: earlier versions bailed when `Accept-Ranges` or `Content-Length` were missing, limiting compatibility.  
+  - **Fix direction**: implement a single-stream GET fallback with HEAD/GET probing. **Status**: **DONE** (Tier 1: HEAD-blocked + non-range fallback).
+- **F) Panics in downloader worker orchestration**  
+  - **Problem**: `expect("worker result")` and panicking on worker `join` propagate as process panics instead of structured errors.  
+  - **Fix direction**: convert these into regular errors and let the scheduler mark the job as failed. **Status**: **TODO**.
+- **Docs: curl backend description drift**  
+  - **Problem**: `docs_http_client_choice.md` and related docs can lag behind the actual Easy vs multi backend behavior.  
+  - **Fix direction**: keep docs explicit about the active backend(s) and configuration options, updating whenever the default backend or multi support changes. **Status**: **PARTIAL** – see "Docs vs code (done)" plus new multi backend work.
+
 ---
 
 ## Archive
