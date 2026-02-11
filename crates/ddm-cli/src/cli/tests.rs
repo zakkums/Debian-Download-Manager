@@ -16,7 +16,10 @@ fn cli_parse_add() {
 #[test]
 fn cli_parse_run() {
     match parse(&["ddm", "run"]) {
-        CliCommand::Run { force_restart } => assert!(!force_restart),
+        CliCommand::Run { force_restart, jobs } => {
+            assert!(!force_restart);
+            assert_eq!(jobs, 1);
+        }
         _ => panic!("expected Run"),
     }
 }
@@ -24,8 +27,22 @@ fn cli_parse_run() {
 #[test]
 fn cli_parse_run_force_restart() {
     match parse(&["ddm", "run", "--force-restart"]) {
-        CliCommand::Run { force_restart } => assert!(force_restart),
+        CliCommand::Run { force_restart, jobs } => {
+            assert!(force_restart);
+            assert_eq!(jobs, 1);
+        }
         _ => panic!("expected Run with force_restart"),
+    }
+}
+
+#[test]
+fn cli_parse_run_jobs() {
+    match parse(&["ddm", "run", "--jobs", "4"]) {
+        CliCommand::Run { force_restart, jobs } => {
+            assert!(!force_restart);
+            assert_eq!(jobs, 4);
+        }
+        _ => panic!("expected Run with --jobs 4"),
     }
 }
 

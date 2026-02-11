@@ -1,8 +1,12 @@
 //! Execute the download phase of a single job: storage, segments, progress, finalize.
 
+mod guard;
+mod progress_worker;
+
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::config::DdmConfig;
@@ -14,20 +18,10 @@ use crate::segmenter;
 use crate::storage;
 use crate::host_policy::HostPolicy;
 
-use super::budget::GlobalConnectionBudget;
-use super::progress::ProgressStats;
-
-/// Releases reserved connections when dropped.
-struct BudgetGuard<'a> {
-    budget: &'a GlobalConnectionBudget,
-    reserved: usize,
-}
-
-impl Drop for BudgetGuard<'_> {
-    fn drop(&mut self) {
-        self.budget.release(self.reserved);
-    }
-}
+use self::guard::BudgetGuard;
+use self::progress_worker::run_progress_persistence_loop;
+use crate::scheduler::budget::GlobalConnectionBudget;
+use crate::scheduler::progress::ProgressStats;
 
 /// Runs the download phase: open/create storage, download incomplete segments,
 /// persist progress, update metadata, and finalize if complete.
@@ -47,7 +41,8 @@ pub(super) async fn execute_download_phase(
     segments: &[segmenter::Segment],
     bitmap: &mut segmenter::SegmentBitmap,
     cfg: &DdmConfig,
-    host_policy: &mut HostPolicy,
+    host_policy: Option<&mut HostPolicy>,
+    shared_policy: Option<std::sync::Arc<tokio::sync::Mutex<HostPolicy>>>,
     progress_tx: Option<&tokio::sync::mpsc::Sender<ProgressStats>>,
     global_budget: Option<&GlobalConnectionBudget>,
 ) -> Result<()> {
@@ -75,7 +70,7 @@ pub(super) async fn execute_download_phase(
         Some(b) => b.reserve(max_concurrent),
         None => max_concurrent,
     };
-    let _budget_guard = global_budget.map(|b| BudgetGuard {
+    let _budget_guard: Option<BudgetGuard<'_>> = global_budget.map(|b| BudgetGuard {
         budget: b,
         reserved: actual_concurrent,
     });
@@ -92,37 +87,21 @@ pub(super) async fn execute_download_phase(
         .sum();
     let download_start = Instant::now();
 
-    let (bitmap_tx, mut progress_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(8);
-    let db_clone = db.clone();
-    let segments_vec = segments.to_vec();
-    let stats_tx = progress_tx.cloned();
-    let download_start = download_start;
-    let progress_handle = tokio::spawn(async move {
-        while let Some(blob) = progress_rx.recv().await {
-            if db_clone.update_bitmap(job_id, &blob).await.is_err() {
-                tracing::warn!(job_id, "durable progress update failed");
-            }
-            if let Some(ref tx) = stats_tx {
-                let bitmap = segmenter::SegmentBitmap::from_bytes(&blob, segment_count_u);
-                let bytes_done: u64 = segments_vec
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, _)| bitmap.is_completed(*i))
-                    .map(|(_, s)| s.end - s.start)
-                    .sum();
-                let elapsed_secs = download_start.elapsed().as_secs_f64();
-                let segments_done = (0..segment_count_u).filter(|i| bitmap.is_completed(*i)).count();
-                let stats = ProgressStats {
-                    bytes_done,
-                    total_bytes: total_size_u,
-                    elapsed_secs,
-                    segments_done,
-                    segment_count: segment_count_u,
-                };
-                let _ = tx.try_send(stats);
-            }
-        }
-    });
+    let in_flight_bytes: Arc<Vec<std::sync::atomic::AtomicU64>> = Arc::new(
+        (0..segment_count_u).map(|_| std::sync::atomic::AtomicU64::new(0)).collect(),
+    );
+    let (bitmap_tx, progress_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(8);
+    let progress_handle = tokio::spawn(run_progress_persistence_loop(
+        progress_rx,
+        db.clone(),
+        job_id,
+        segment_count_u,
+        segments.to_vec(),
+        total_size_u,
+        progress_tx.cloned(),
+        Arc::clone(&in_flight_bytes),
+        download_start,
+    ));
 
     let mut bitmap_copy = bitmap.clone();
     let (bitmap_result, summary) = {
@@ -133,6 +112,7 @@ pub(super) async fn execute_download_phase(
         let max_concurrent = actual_concurrent.max(1);
         let policy = retry_policy;
         let tx = bitmap_tx.clone();
+        let in_flight = Arc::clone(&in_flight_bytes);
         tokio::task::spawn_blocking(move || -> Result<(segmenter::SegmentBitmap, DownloadSummary)> {
             let mut summary = DownloadSummary::default();
             downloader::download_segments(
@@ -145,6 +125,7 @@ pub(super) async fn execute_download_phase(
                 Some(&policy),
                 &mut summary,
                 Some(&tx),
+                Some(in_flight),
             )?;
             Ok((bitmap_copy, summary))
         })
@@ -157,8 +138,8 @@ pub(super) async fn execute_download_phase(
     drop(bitmap_tx);
     progress_handle.await.context("progress writer join")?;
     let download_elapsed = download_start.elapsed();
-    host_policy
-        .record_job_outcome(
+    if let Some(p) = host_policy {
+        p.record_job_outcome(
             url,
             segment_count_u,
             bytes_this_run,
@@ -167,6 +148,19 @@ pub(super) async fn execute_download_phase(
             summary.error_events,
         )
         .context("record job outcome for adaptive policy")?;
+    } else if let Some(ref arc) = shared_policy {
+        arc.lock()
+            .await
+            .record_job_outcome(
+                url,
+                segment_count_u,
+                bytes_this_run,
+                download_elapsed,
+                summary.throttle_events,
+                summary.error_events,
+            )
+            .context("record job outcome for adaptive policy")?;
+    }
 
     storage_writer.sync()?;
 

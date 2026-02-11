@@ -13,6 +13,8 @@ use crate::retry::{RetryPolicy, SegmentError};
 use crate::segmenter::{Segment, SegmentBitmap};
 use crate::storage::StorageWriter;
 use std::collections::HashMap;
+use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
 
 /// Result of a single segment download (used for retry classification).
 pub type SegmentResult = Result<(), SegmentError>;
@@ -29,6 +31,7 @@ pub struct DownloadSummary {
 /// one thread per incomplete segment (unbounded). Fills `summary_out` with throttle/error counts.
 /// If `progress_tx` is `Some`, the current bitmap is sent after each completed segment
 /// (coalesced every N completions) so the caller can persist progress.
+/// If `in_flight_bytes` is `Some`, each segment updates its slot as bytes are received for smoother progress.
 pub fn download_segments(
     url: &str,
     custom_headers: &HashMap<String, String>,
@@ -39,6 +42,7 @@ pub fn download_segments(
     retry_policy: Option<&RetryPolicy>,
     summary_out: &mut DownloadSummary,
     progress_tx: Option<&tokio::sync::mpsc::Sender<Vec<u8>>>,
+    in_flight_bytes: Option<Arc<Vec<AtomicU64>>>,
 ) -> Result<()> {
     let incomplete: Vec<(usize, Segment)> = segments
         .iter()
@@ -70,6 +74,7 @@ pub fn download_segments(
             bitmap,
             summary_out,
             progress_tx,
+            in_flight_bytes,
         )
     } else {
         run::run_unbounded(
@@ -82,6 +87,7 @@ pub fn download_segments(
             bitmap,
             summary_out,
             progress_tx,
+            in_flight_bytes,
         )
     }
 }

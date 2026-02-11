@@ -17,13 +17,18 @@ use std::time::Duration;
 /// Result of a single segment download (used for retry classification).
 pub(super) type SegmentResult = Result<(), SegmentError>;
 
+/// Optional in-flight counter: (per-segment bytes vec, segment index). Updated in write callback.
+pub(super) type InFlightRef = Option<(Arc<Vec<AtomicU64>>, usize)>;
+
 /// Downloads a single segment: GET with Range header, write body to storage at segment offset.
 /// Validates 206 and Content-Range before writing any body; aborts on first write if not honored.
+/// If `in_flight` is Some, the segment's byte count is written so progress can sum in-flight bytes.
 pub(super) fn download_one_segment(
     url: &str,
     custom_headers: &HashMap<String, String>,
     segment: &Segment,
     storage: &StorageWriter,
+    in_flight: InFlightRef,
 ) -> SegmentResult {
     let bytes_written = Arc::new(AtomicU64::new(0));
     let bytes_written_in_cb = Arc::clone(&bytes_written);
@@ -66,7 +71,14 @@ pub(super) fn download_one_segment(
         transfer
             .header_function(move |data| {
                 if let Ok(s) = str::from_utf8(data) {
-                    let _ = response_headers_header.lock().unwrap().push(s.trim_end().to_string());
+                    let line = s.trim_end();
+                    if line.starts_with("HTTP/") {
+                        let mut vec = response_headers_header.lock().unwrap();
+                        vec.clear();
+                        vec.push(line.to_string());
+                    } else {
+                        let _ = response_headers_header.lock().unwrap().push(line.to_string());
+                    }
                 }
                 true
             })
@@ -87,6 +99,9 @@ pub(super) fn download_one_segment(
                     return Ok(0);
                 }
                 let off = bytes_written_in_cb.fetch_add(data.len() as u64, Ordering::Relaxed);
+                if let Some((ref v, idx)) = in_flight {
+                    v.get(idx).map(|a| a.store(bytes_written_in_cb.load(Ordering::Relaxed), Ordering::Relaxed));
+                }
                 match storage.write_at(segment_start + off, data) {
                     Ok(()) => Ok(data.len()),
                     Err(e) => {

@@ -92,4 +92,38 @@ mod tests {
         f.flush().unwrap();
         assert!(resolve_har(f.path(), false).is_err());
     }
+
+    #[test]
+    fn resolve_har_prefers_download_like_entry() {
+        let har = r#"{
+            "log": {
+                "version": "1.2",
+                "entries": [
+                    {
+                        "request": { "url": "https://example.com/start", "headers": [] },
+                        "response": { "status": 302, "redirectURL": "https://example.com/login", "headers": [] }
+                    },
+                    {
+                        "request": { "url": "https://example.com/login", "headers": [] },
+                        "response": { "status": 200, "headers": [] }
+                    },
+                    {
+                        "request": { "url": "https://cdn.example.com/file.zip", "headers": [] },
+                        "response": {
+                            "status": 206,
+                            "headers": [
+                                { "name": "Content-Length", "value": "1024" },
+                                { "name": "Accept-Ranges", "value": "bytes" }
+                            ]
+                        }
+                    }
+                ]
+            }
+        }"#;
+        let mut f = NamedTempFile::new().unwrap();
+        f.write_all(har.as_bytes()).unwrap();
+        f.flush().unwrap();
+        let spec = resolve_har(f.path(), false).unwrap();
+        assert_eq!(spec.url, "https://cdn.example.com/file.zip");
+    }
 }

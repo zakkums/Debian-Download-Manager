@@ -6,9 +6,9 @@ Use this file to see what's done and what's left. When starting a new chat, shar
 
 ## Status summary
 
-- **Done:** Core engine, resume DB, scheduler, downloader (Easy + threads), safe resume, retry/backoff, progress durability, abort deadlock fix, Range pre-write validation, import-har, bench, HostPolicy persistence, global scheduling, docs (ARCHITECTURE + http client choice), integration test. All correctness items from the roadmap are complete.
+- **Done:** Core engine, resume DB, scheduler, downloader (Easy + threads), safe resume, retry/backoff, progress durability, abort deadlock fix, Range pre-write validation, redirect-safe header capture, saturating budget release, import-har, bench, HostPolicy persistence, global scheduling, docs, integration test.
 - **In progress:** (none)
-- **Next (optional):** Curl multi later.
+- **Next (ROI order):** Curl multi (later).
 
 ---
 
@@ -48,14 +48,19 @@ Everything below is implemented and merged.
 - [x] **Range pre-write validation** – First write_function checks headers (parse_http_status + parse_content_range); if not 206 or mismatch, return 0 to abort before writing any byte.
 - [x] **Progress durability under errors** – Process results as they arrive; mark bitmap and persist on each Ok; drain and record first error; return error after loop.
 - [x] **Progress coalescing** – Coalesce every N completions; abort flag on non-retryable error.
+- [x] **Redirect-safe header capture** – With `follow_location(true)`, curl sends headers for each response (e.g. 302 then 206). We clear the header vector when a line starts with `HTTP/` so only the final response’s headers are kept; `parse_http_status` / `parse_content_range` then see 206 and correct Content-Range, avoiding false InvalidRangeResponse on CDN/file-site redirects.
+- [x] **Saturating budget release** – `GlobalConnectionBudget::release()` implemented with a compare-exchange loop so it saturates at 0 and is safe under concurrent use (no underflow when multiple jobs run in parallel).
 
 ### Features
 
 - [x] **Progress output** – ProgressStats; bytes done, ETA, MiB/s; CLI run prints throttled progress line.
 - [x] **import-har** – HAR parse, follow redirects, resolve final URL; JobSettings.custom_headers; CLI `ddm import-har <path> [--allow-cookies]`.
+- [x] **HAR resolver selection** – Pick entry whose response looks like a real download (200/206 + Content-Length, prefer 206 + Accept-Ranges); fallback to redirect-chain if none. Unit test `resolve_har_prefers_download_like_entry`.
+- [x] **Progress in-flight bytes** – Per-segment atomics updated in write callback; ProgressStats.bytes_in_flight; effective_bytes() for smoother rate; CLI progress uses effective rate.
 - [x] **bench** – run_bench 4/8/16 segments; recommend_segment_count; CLI `ddm bench <url>`.
 - [x] **Persist HostPolicy** – PersistedHostPolicy JSON; save_to_path/load_from_path; CLI run loads/saves.
 - [x] **Global scheduling limits** – GlobalConnectionBudget; reserve/release in execute.
+- [x] **Parallel scheduler** – `run_jobs_parallel` (up to N jobs in flight); shared `Arc<Mutex<HostPolicy>>` and `Arc<GlobalConnectionBudget>`; CLI `ddm run --jobs N` (default 1).
 - [x] **Docs reality check** – ARCHITECTURE.md and docs_http_client_choice.md updated to describe per-segment Easy + threads; curl multi noted as future option.
 - [x] **Checksum** – `checksum::sha256_path(path)` (chunked read, SHA-256, hex); CLI `ddm checksum <path>`. Unit tests; off the hot path.
 
@@ -74,7 +79,7 @@ Everything below is implemented and merged.
 
 ---
 
-## Not started (in priority order)
+## Not started (in priority order, best ROI)
 
 - [ ] **Curl multi (later)** – Consider for efficiency; Easy + threads fine for current segment counts.
 - [ ] **Tests for new code** – Unit tests for new modules as added; update PROGRESS when adding tests.
@@ -98,6 +103,14 @@ Server could return 200 + full body for a Range request; we validated after perf
 ### Docs vs code (done)
 
 Docs said "libcurl multi"; code uses Easy + threads. ARCHITECTURE and docs_http_client_choice updated to match.
+
+### Redirect header false-fail (fixed)
+
+With `follow_location(true)`, curl’s header callback receives headers for every response (e.g. 302 redirect then 206). We were storing all lines and `parse_http_status(headers.first())` saw the first status (302), so the pre-write check aborted with InvalidRangeResponse even when the final response was 206. Fix: in the header callback, when a line starts with `HTTP/`, clear the header vector then push that line so “current headers” always correspond to the final response.
+
+### Budget release underflow (fixed)
+
+`GlobalConnectionBudget::release()` did load then fetch_sub with a stale value; safe with single-threaded budget usage but would underflow with parallel jobs. Fix: implement release with a compare-exchange loop that saturates at 0 (no wraparound).
 
 ---
 

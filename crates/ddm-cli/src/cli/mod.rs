@@ -35,6 +35,9 @@ pub enum CliCommand {
         /// If the remote file changed (ETag/Last-Modified/size), discard progress and re-download.
         #[arg(long)]
         force_restart: bool,
+        /// Run up to N jobs concurrently (default 1). Use >1 for parallel downloads sharing the global connection budget.
+        #[arg(long, default_value = "1", value_name = "N")]
+        jobs: usize,
     },
 
     /// Show status of all jobs.
@@ -90,9 +93,9 @@ impl CliCommand {
 
         match cli.command {
             CliCommand::Add { url } => run_add(&db, &url).await?,
-            CliCommand::Run { force_restart } => {
+            CliCommand::Run { force_restart, jobs } => {
                 let download_dir = std::env::current_dir()?;
-                run_scheduler(&db, &cfg, &download_dir, force_restart).await?;
+                run_scheduler(&db, &cfg, &download_dir, force_restart, jobs).await?;
             }
             CliCommand::Status => run_status(&db).await?,
             CliCommand::Pause { id } => run_pause(&db, id).await?,

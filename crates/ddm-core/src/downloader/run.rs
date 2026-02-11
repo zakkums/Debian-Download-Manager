@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
@@ -29,6 +29,7 @@ pub(super) fn run_concurrent(
     bitmap: &mut SegmentBitmap,
     summary_out: &mut DownloadSummary,
     progress_tx: Option<&tokio::sync::mpsc::Sender<Vec<u8>>>,
+    in_flight_bytes: Option<Arc<Vec<AtomicU64>>>,
 ) -> Result<()> {
     let count = incomplete.len();
     let work: Arc<Mutex<VecDeque<(usize, Segment)>>> =
@@ -45,6 +46,7 @@ pub(super) fn run_concurrent(
         let h = headers.clone();
         let st = storage.clone();
         let policy = retry_policy;
+        let in_flight = in_flight_bytes.as_ref().map(Arc::clone);
         handles.push(std::thread::spawn(move || {
             loop {
                 if abort.load(Ordering::Relaxed) {
@@ -54,9 +56,12 @@ pub(super) fn run_concurrent(
                     Some(p) => p,
                     None => break,
                 };
+                let in_flight_seg = in_flight.as_ref().map(|v| (Arc::clone(v), index));
                 let res: SegmentResult = match policy.as_ref() {
-                    Some(p) => run_with_retry(p, || segment::download_one_segment(&u, &h, &segment, &st)),
-                    None => segment::download_one_segment(&u, &h, &segment, &st),
+                    Some(p) => run_with_retry(p, || {
+                        segment::download_one_segment(&u, &h, &segment, &st, in_flight_seg.clone())
+                    }),
+                    None => segment::download_one_segment(&u, &h, &segment, &st, in_flight_seg),
                 };
                 let _ = tx.send((index, res));
             }
@@ -131,6 +136,7 @@ pub(super) fn run_unbounded(
     bitmap: &mut SegmentBitmap,
     summary_out: &mut DownloadSummary,
     progress_tx: Option<&tokio::sync::mpsc::Sender<Vec<u8>>>,
+    in_flight_bytes: Option<Arc<Vec<AtomicU64>>>,
 ) -> Result<()> {
     let results: Vec<(usize, SegmentResult)> = incomplete
         .into_iter()
@@ -139,10 +145,13 @@ pub(super) fn run_unbounded(
             let h = headers.clone();
             let st = storage.clone();
             let policy = retry_policy.clone();
+            let in_flight = in_flight_bytes.as_ref().map(|v| (Arc::clone(v), index));
             let res = std::thread::spawn(move || {
                 match policy.as_ref() {
-                    Some(p) => run_with_retry(p, || segment::download_one_segment(&u, &h, &segment, &st)),
-                    None => segment::download_one_segment(&u, &h, &segment, &st),
+                    Some(p) => run_with_retry(p, || {
+                        segment::download_one_segment(&u, &h, &segment, &st, in_flight.clone())
+                    }),
+                    None => segment::download_one_segment(&u, &h, &segment, &st, in_flight),
                 }
             })
             .join()

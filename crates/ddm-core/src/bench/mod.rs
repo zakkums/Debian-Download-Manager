@@ -83,6 +83,7 @@ pub fn run_bench(
             Some(&retry_policy),
             &mut summary,
             None,
+            None,
         );
         let elapsed = start.elapsed().as_secs_f64();
 

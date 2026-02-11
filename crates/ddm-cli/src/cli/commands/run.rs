@@ -6,6 +6,7 @@ use ddm_core::host_policy::HostPolicy;
 use ddm_core::resume_db::ResumeDb;
 use ddm_core::scheduler::{self, GlobalConnectionBudget, ProgressStats};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Instant;
 
 pub async fn run_scheduler(
@@ -13,13 +14,13 @@ pub async fn run_scheduler(
     cfg: &DdmConfig,
     download_dir: &Path,
     force_restart: bool,
+    jobs: usize,
 ) -> Result<()> {
     let recovered = db.recover_running_jobs().await?;
     if recovered > 0 {
         tracing::info!("recovered {} job(s) from previous run", recovered);
     }
-    let global_budget = GlobalConnectionBudget::new(cfg.max_total_connections);
-    let mut run_count = 0u32;
+    let global_budget = Arc::new(GlobalConnectionBudget::new(cfg.max_total_connections));
     let mut host_policy = match HostPolicy::default_path().and_then(|p| {
         HostPolicy::load_from_path(&p, cfg.min_segments, cfg.max_segments)
     }) {
@@ -42,7 +43,11 @@ pub async fn run_scheduler(
                 let done_mib = stats.bytes_done as f64 / 1_048_576.0;
                 let total_mib = stats.total_bytes as f64 / 1_048_576.0;
                 let pct = stats.fraction() * 100.0;
-                let rate = stats.bytes_per_sec();
+                let rate = if stats.elapsed_secs > 0.0 {
+                    stats.effective_bytes() as f64 / stats.elapsed_secs
+                } else {
+                    0.0
+                };
                 let rate_mib = rate / 1_048_576.0;
                 let eta = stats
                     .eta_secs()
@@ -58,21 +63,38 @@ pub async fn run_scheduler(
         println!();
     });
 
-    while scheduler::run_next_job(
-        db,
-        force_restart,
-        cfg,
-        download_dir,
-        &mut host_policy,
-        Some(&progress_tx),
-        Some(&global_budget),
-    )
-    .await?
-    {
-        run_count += 1;
-    }
+    let run_count = if jobs > 1 {
+        scheduler::run_jobs_parallel(
+            db,
+            cfg,
+            download_dir.to_path_buf(),
+            &mut host_policy,
+            force_restart,
+            Some(progress_tx),
+            Arc::clone(&global_budget),
+            jobs,
+        )
+        .await?
+    } else {
+        let mut run_count = 0u32;
+        let budget_ref = global_budget.as_ref();
+        while scheduler::run_next_job(
+            db,
+            force_restart,
+            cfg,
+            download_dir,
+            &mut host_policy,
+            Some(&progress_tx),
+            Some(budget_ref),
+        )
+        .await?
+        {
+            run_count += 1;
+        }
+        drop(progress_tx);
+        run_count
+    };
 
-    drop(progress_tx);
     let _ = progress_handle.await;
 
     if let Ok(path) = HostPolicy::default_path() {

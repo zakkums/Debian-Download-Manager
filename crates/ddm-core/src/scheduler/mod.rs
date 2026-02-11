@@ -7,9 +7,11 @@
 mod budget;
 mod choose;
 mod execute;
-mod run;
+mod parallel;
 mod progress;
+mod run;
 
 pub use budget::GlobalConnectionBudget;
+pub use parallel::run_jobs_parallel;
 pub use progress::ProgressStats;
 pub use run::{run_one_job, run_next_job};

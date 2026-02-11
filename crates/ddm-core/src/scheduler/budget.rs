@@ -55,8 +55,21 @@ impl GlobalConnectionBudget {
     }
 
     /// Release `n` connections back to the budget. Call with the value returned from `reserve`.
+    /// Saturates at 0 (no underflow); safe for concurrent use when multiple jobs run in parallel.
     pub fn release(&self, n: usize) {
-        self.in_use.fetch_sub(n.min(self.in_use.load(Ordering::Relaxed)), Ordering::Release);
+        let mut current = self.in_use.load(Ordering::Relaxed);
+        loop {
+            let new = current.saturating_sub(n);
+            match self.in_use.compare_exchange_weak(
+                current,
+                new,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(actual) => current = actual,
+            }
+        }
     }
 }
 
@@ -80,5 +93,14 @@ mod tests {
         budget.release(8);
         assert_eq!(budget.in_use(), 0);
         assert_eq!(budget.available(), 16);
+    }
+
+    #[test]
+    fn release_saturates_at_zero() {
+        let budget = GlobalConnectionBudget::new(8);
+        assert_eq!(budget.reserve(4), 4);
+        budget.release(10);
+        assert_eq!(budget.in_use(), 0);
+        assert_eq!(budget.available(), 8);
     }
 }

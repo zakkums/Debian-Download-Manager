@@ -1,4 +1,4 @@
-//! Run one job: probe, validate, then download only missing segments.
+//! Run a single job with exclusive host policy (sequential scheduler).
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -13,10 +13,10 @@ use crate::storage;
 use crate::url_model;
 use crate::host_policy::HostPolicy;
 
-use super::budget::GlobalConnectionBudget;
-use super::choose;
-use super::execute;
-use super::progress::ProgressStats;
+use super::super::budget::GlobalConnectionBudget;
+use super::super::choose;
+use super::super::execute;
+use super::super::progress::ProgressStats;
 
 /// Runs a single job: re-validates with HEAD, then downloads only incomplete segments.
 ///
@@ -56,7 +56,6 @@ pub async fn run_one_job(
     .context("probe task join")?
     .context("HEAD request failed")?;
 
-    // Update per-host policy cache with the latest HEAD metadata.
     host_policy
         .record_head_result(&url, &head)
         .context("update host policy from HEAD")?;
@@ -137,7 +136,8 @@ pub async fn run_one_job(
         &segments,
         &mut bitmap,
         cfg,
-        host_policy,
+        Some(host_policy),
+        None,
         progress_tx,
         global_budget,
     )
@@ -147,38 +147,4 @@ pub async fn run_one_job(
         let _ = db.set_state(job_id, JobState::Error).await;
     }
     run_result
-}
-
-/// Runs the next queued job (smallest id first, FIFO). Returns true if a job was run, false if none queued.
-/// If `progress_tx` is `Some`, progress stats are sent during the download.
-pub async fn run_next_job(
-    db: &ResumeDb,
-    force_restart: bool,
-    cfg: &DdmConfig,
-    download_dir: &Path,
-    host_policy: &mut HostPolicy,
-    progress_tx: Option<&tokio::sync::mpsc::Sender<ProgressStats>>,
-    global_budget: Option<&GlobalConnectionBudget>,
-) -> Result<bool> {
-    let jobs = db.list_jobs().await?;
-    let next = jobs
-        .into_iter()
-        .filter(|j| j.state == JobState::Queued)
-        .min_by_key(|j| j.id)
-        .map(|j| j.id);
-    let Some(job_id) = next else {
-        return Ok(false);
-    };
-    run_one_job(
-        db,
-        job_id,
-        force_restart,
-        cfg,
-        download_dir,
-        host_policy,
-        progress_tx,
-        global_budget,
-    )
-    .await?;
-    Ok(true)
 }

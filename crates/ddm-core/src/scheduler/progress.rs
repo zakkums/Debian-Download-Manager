@@ -8,6 +8,8 @@
 pub struct ProgressStats {
     /// Bytes written so far (completed segments).
     pub bytes_done: u64,
+    /// Bytes currently being received for in-flight segments (smoother rate/ETA).
+    pub bytes_in_flight: u64,
     /// Total file size in bytes.
     pub total_bytes: u64,
     /// Elapsed time since download start (seconds).
@@ -20,11 +22,17 @@ pub struct ProgressStats {
 
 impl ProgressStats {
     /// Total download rate in bytes per second (0 if elapsed is 0).
+    /// Uses bytes_done only (completed segments); for smoother rate use bytes_done + bytes_in_flight.
     pub fn bytes_per_sec(&self) -> f64 {
         if self.elapsed_secs <= 0.0 {
             return 0.0;
         }
         self.bytes_done as f64 / self.elapsed_secs
+    }
+
+    /// Effective bytes so far (completed + in-flight) for smoother rate/ETA.
+    pub fn effective_bytes(&self) -> u64 {
+        self.bytes_done.saturating_add(self.bytes_in_flight)
     }
 
     /// Estimated seconds remaining (None if rate is 0 or already done).
