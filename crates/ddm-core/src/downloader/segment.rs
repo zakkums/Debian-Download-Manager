@@ -3,6 +3,7 @@
 //! Enforces Range behavior: we always send a Range header, so we require HTTP 206
 //! Partial Content to avoid servers that ignore Range and return 200 with the
 //! full body (which would corrupt the temp file when written at segment offset).
+//! Validation is done in the write callback before writing any byte (pre-write).
 
 use crate::retry::SegmentError;
 use crate::segmenter::Segment;
@@ -17,7 +18,7 @@ use std::time::Duration;
 pub(super) type SegmentResult = Result<(), SegmentError>;
 
 /// Downloads a single segment: GET with Range header, write body to storage at segment offset.
-/// Returns `SegmentError` so callers can classify and retry with backoff.
+/// Validates 206 and Content-Range before writing any body; aborts on first write if not honored.
 pub(super) fn download_one_segment(
     url: &str,
     custom_headers: &HashMap<String, String>,
@@ -28,7 +29,13 @@ pub(super) fn download_one_segment(
     let bytes_written_in_cb = Arc::clone(&bytes_written);
     let storage_error: Arc<Mutex<Option<std::io::Error>>> = Arc::new(Mutex::new(None));
     let storage_error_cb = Arc::clone(&storage_error);
+    let response_headers: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let response_headers_header = Arc::clone(&response_headers);
+    let response_headers_write = Arc::clone(&response_headers);
+    let range_check: Arc<Mutex<Option<Result<(), u32>>>> = Arc::new(Mutex::new(None));
+    let range_check_cb = Arc::clone(&range_check);
     let segment_start = segment.start;
+    let segment_end_inclusive = segment.end.saturating_sub(1);
     let storage = storage.clone();
 
     let mut easy = curl::easy::Easy::new();
@@ -36,17 +43,13 @@ pub(super) fn download_one_segment(
     easy.follow_location(true).map_err(SegmentError::Curl)?;
     easy.connect_timeout(Duration::from_secs(30))
         .map_err(SegmentError::Curl)?;
-    // Prefer low-speed timeout: abort if throughput drops below 1 KiB/s for 60s.
-    // Keeps large segments on slow links from being killed by a hard wall-clock timeout.
-    easy.low_speed_limit(1024)
-        .map_err(SegmentError::Curl)?;
+    easy.low_speed_limit(1024).map_err(SegmentError::Curl)?;
     easy.low_speed_time(Duration::from_secs(60))
         .map_err(SegmentError::Curl)?;
-    // Safety net: hard timeout after 1 hour so a completely stuck transfer eventually fails.
     easy.timeout(Duration::from_secs(3600))
         .map_err(SegmentError::Curl)?;
 
-    let range_str = format!("{}-{}", segment.start, segment.end.saturating_sub(1));
+    let range_str = format!("{}-{}", segment.start, segment_end_inclusive);
     easy.range(&range_str).map_err(SegmentError::Curl)?;
 
     let mut list = curl::easy::List::new();
@@ -58,19 +61,31 @@ pub(super) fn download_one_segment(
         easy.http_headers(list).map_err(SegmentError::Curl)?;
     }
 
-    let mut response_headers: Vec<String> = Vec::new();
     {
         let mut transfer = easy.transfer();
         transfer
-            .header_function(|data| {
+            .header_function(move |data| {
                 if let Ok(s) = str::from_utf8(data) {
-                    response_headers.push(s.trim_end().to_string());
+                    let _ = response_headers_header.lock().unwrap().push(s.trim_end().to_string());
                 }
                 true
             })
             .map_err(SegmentError::Curl)?;
         transfer
             .write_function(move |data| {
+                let mut check = range_check_cb.lock().unwrap();
+                if check.is_none() {
+                    let headers = response_headers_write.lock().unwrap().clone();
+                    let status = parse_http_status(&headers);
+                    let content_ok = parse_content_range(&headers)
+                        .map(|(s, e)| s == segment_start && e == segment_end_inclusive)
+                        .unwrap_or(false);
+                    let ok = status == Some(206) && content_ok;
+                    *check = Some(if ok { Ok(()) } else { Err(status.unwrap_or(0)) });
+                }
+                if let Some(Err(_)) = *check {
+                    return Ok(0);
+                }
                 let off = bytes_written_in_cb.fetch_add(data.len() as u64, Ordering::Relaxed);
                 match storage.write_at(segment_start + off, data) {
                     Ok(()) => Ok(data.len()),
@@ -87,6 +102,9 @@ pub(super) fn download_one_segment(
         let perform_result = transfer.perform();
         if let Err(e) = perform_result {
             if e.is_write_error() {
+                if let Some(Err(code)) = range_check.lock().unwrap().take() {
+                    return Err(SegmentError::InvalidRangeResponse(code));
+                }
                 if let Some(io_err) = storage_error.lock().unwrap().take() {
                     return Err(SegmentError::Storage(io_err));
                 }
@@ -99,15 +117,11 @@ pub(super) fn download_one_segment(
     if code < 200 || code >= 300 {
         return Err(SegmentError::Http(code));
     }
-
-    // We sent a Range header; require 206 Partial Content so we don't accept 200 full-body (corruption).
     if code != 206 {
         return Err(SegmentError::InvalidRangeResponse(code));
     }
-
-    // Optionally validate Content-Range matches our segment (extra safety).
-    if let Some((start, end)) = parse_content_range(&response_headers) {
-        if start != segment.start || end != segment.end.saturating_sub(1) {
+    if let Some((start, end)) = parse_content_range(&response_headers.lock().unwrap()) {
+        if start != segment.start || end != segment_end_inclusive {
             return Err(SegmentError::InvalidRangeResponse(code));
         }
     }
@@ -119,6 +133,13 @@ pub(super) fn download_one_segment(
     }
 
     Ok(())
+}
+
+/// Parse HTTP status code from the first header line (e.g. "HTTP/1.1 206 ...").
+fn parse_http_status(headers: &[String]) -> Option<u32> {
+    let first = headers.first()?.trim();
+    let part = first.split_whitespace().nth(1)?;
+    part.parse().ok()
 }
 
 /// Parse Content-Range from response headers. Returns (start, end_inclusive) if present and valid.

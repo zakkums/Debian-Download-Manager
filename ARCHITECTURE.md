@@ -15,8 +15,8 @@ The implementation is organized as a small Rust workspace:
     `~/.local/state/ddm/ddm.log` using the XDG base directory spec.
   - **URL model (`url_model`)**: Normalizes URLs, derives safe filenames (from
     `Content-Disposition` or URL path), and applies per-host policy hints.
-  - **HEAD/metadata (`fetch_head`)**: Uses libcurl (multi) to probe URLs,
-    verify `Content-Length` and `Accept-Ranges: bytes`, and capture
+  - **HEAD/metadata (`fetch_head`)**: Uses libcurl (Easy handle) to probe URLs
+    via HEAD, verify `Content-Length` and `Accept-Ranges: bytes`, and capture
     ETag/Last-Modified.
   - **Segmenter (`segmenter`)**: Range math and segment planning, including
     bitmaps that track per-segment completion.
@@ -24,8 +24,9 @@ The implementation is organized as a small Rust workspace:
     concurrency, retry/backoff, and the adaptive optimizer that adjusts
     segment counts based on throughput and error rates.
   - **Downloader (`downloader`)**: Core segmented engine that consumes direct
-    URLs plus headers and drives multiple HTTP Range requests, writing to the
-    appropriate file offsets.
+    URLs plus headers and drives multiple HTTP Range requests (one Easy handle
+    per segment in separate OS threads), writing to the appropriate file
+    offsets.
   - **Storage (`storage`)**: Handles `fallocate`-based preallocation, buffered
     offset writes, fsync policy, and atomic finalize (download to `.part` then
     rename).
@@ -60,9 +61,9 @@ The implementation is organized as a small Rust workspace:
    - Uses **fetch_head** to validate metadata and discover size/range support.
    - Invokes the **segmenter** to plan segments and initialize the bitmap.
    - Delegates low-level I/O to **downloader** and **storage**.
-5. The **downloader** drives segmented HTTP Range downloads using libcurl's
-   multi interface, updating the bitmap in the **resume DB** as segments
-   complete.
+5. The **downloader** drives segmented HTTP Range downloads using libcurl Easy
+   handles (one per segment, in a bounded worker pool of OS threads), updating
+   the bitmap in the **resume DB** as segments complete.
 6. On completion, **storage** performs atomic finalize and **checksum**
    optionally verifies integrity.
 7. The **CLI** subcommands `status`, `pause`, `resume`, and `remove` operate

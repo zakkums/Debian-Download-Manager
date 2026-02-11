@@ -303,9 +303,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "curl",
+ "hex",
  "libc",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "tempfile",
  "thiserror 1.0.69",

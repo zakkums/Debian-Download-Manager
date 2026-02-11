@@ -9,8 +9,8 @@ use ddm_core::resume_db::ResumeDb;
 use std::path::Path;
 
 use commands::{
-    run_add, run_bench, run_import_har, run_pause, run_remove, run_resume, run_scheduler,
-    run_status,
+    run_add, run_bench, run_checksum, run_import_har, run_pause, run_remove, run_resume,
+    run_scheduler, run_status,
 };
 
 /// Top-level CLI for the DDM download manager.
@@ -73,6 +73,12 @@ pub enum CliCommand {
         /// Direct HTTP/HTTPS URL to benchmark.
         url: String,
     },
+
+    /// Compute SHA-256 of a file (e.g. after download).
+    Checksum {
+        /// Path to the file.
+        path: String,
+    },
 }
 
 impl CliCommand {
@@ -96,6 +102,7 @@ impl CliCommand {
                 run_import_har(&db, Path::new(&path), allow_cookies).await?;
             }
             CliCommand::Bench { url } => run_bench(&url).await?,
+            CliCommand::Checksum { path } => run_checksum(Path::new(&path)).await?,
         }
 
         Ok(())

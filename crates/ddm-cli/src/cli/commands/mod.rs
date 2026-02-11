@@ -2,6 +2,7 @@
 
 mod add;
 mod bench;
+mod checksum;
 mod import_har;
 mod pause;
 mod remove;
@@ -11,6 +12,7 @@ mod status;
 
 pub use add::run_add;
 pub use bench::run_bench;
+pub use checksum::run_checksum;
 pub use import_har::run_import_har;
 pub use pause::run_pause;
 pub use remove::run_remove;

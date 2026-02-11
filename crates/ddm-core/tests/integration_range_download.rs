@@ -1,0 +1,55 @@
+//! Integration test: local HTTP server with Range support, multi-segment download and resume.
+//!
+//! Starts a minimal range-capable server, adds a job, runs it via the scheduler,
+//! and asserts the downloaded file matches the served body.
+
+mod common;
+
+use ddm_core::config::DdmConfig;
+use ddm_core::host_policy::HostPolicy;
+use ddm_core::resume_db::{JobSettings, JobState, ResumeDb};
+use ddm_core::scheduler;
+use tempfile::tempdir;
+
+#[tokio::test]
+async fn multi_segment_download_completes_and_file_matches() {
+    let body: Vec<u8> = (0u8..100).cycle().take(64 * 1024).collect();
+    let url = common::range_server::start(body.clone());
+
+    let download_dir = tempdir().unwrap();
+    let state_dir = tempdir().unwrap();
+    let db_path = state_dir.path().join("jobs.db");
+    let db = ResumeDb::open_at(&db_path).await.unwrap();
+
+    db.add_job(&url, &JobSettings::default()).await.unwrap();
+    let jobs = db.list_jobs().await.unwrap();
+    let job_id = jobs[0].id;
+    db.recover_running_jobs().await.unwrap();
+
+    let cfg = DdmConfig::default();
+    let mut host_policy = HostPolicy::new(cfg.min_segments, cfg.max_segments);
+    scheduler::run_one_job(
+        &db,
+        job_id,
+        false,
+        &cfg,
+        download_dir.path(),
+        &mut host_policy,
+        None,
+        None,
+    )
+    .await
+    .expect("run_one_job");
+
+    let job = db.get_job(job_id).await.unwrap().expect("job exists");
+    assert_eq!(job.state, JobState::Completed, "job should be completed");
+    let final_name = job
+        .final_filename
+        .as_deref()
+        .unwrap_or("download.bin");
+    let final_path = download_dir.path().join(final_name);
+    assert!(final_path.exists(), "final file should exist");
+    let content = std::fs::read(&final_path).unwrap();
+    assert_eq!(content.len(), body.len(), "file size must match");
+    assert_eq!(content, body, "file content must match");
+}

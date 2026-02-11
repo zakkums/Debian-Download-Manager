@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::Path;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::config::DdmConfig;
 use crate::downloader::DownloadSummary;
@@ -79,7 +79,11 @@ pub(super) async fn execute_download_phase(
         budget: b,
         reserved: actual_concurrent,
     });
-    let retry_policy = RetryPolicy::default();
+    let retry_policy = cfg.retry.as_ref().map(|r| RetryPolicy {
+        max_attempts: r.max_attempts,
+        base_delay: Duration::from_secs_f64(r.base_delay_secs),
+        max_delay: Duration::from_secs(r.max_delay_secs),
+    }).unwrap_or_else(RetryPolicy::default);
     let bytes_this_run: u64 = segments
         .iter()
         .enumerate()

@@ -5,6 +5,7 @@
 use anyhow::Result;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::{Pool, Sqlite};
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Handle to the SQLite-backed job database.
@@ -32,6 +33,23 @@ impl ResumeDb {
             .connect(&uri)
             .await?;
 
+        let db = ResumeDb { pool };
+        db.migrate().await?;
+        Ok(db)
+    }
+
+    /// Open (or create) the database at a specific path. Creates parent dirs if needed.
+    /// Intended for tests so the DB can be placed in a temp directory.
+    pub async fn open_at(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        let uri = format!("sqlite://{}?mode=rwc", path.display());
+        let pool = SqlitePoolOptions::new()
+            .max_connections(8)
+            .connect(&uri)
+            .await?;
         let db = ResumeDb { pool };
         db.migrate().await?;
         Ok(db)

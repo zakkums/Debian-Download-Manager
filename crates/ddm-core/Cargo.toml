@@ -37,6 +37,10 @@ url = "2.5"
 # Temp dir for bench
 tempfile = "3.14"
 
+# Checksum (optional, off hot path)
+sha2 = "0.10"
+hex = "0.4"
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

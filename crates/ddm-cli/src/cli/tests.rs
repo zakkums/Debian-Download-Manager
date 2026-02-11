@@ -91,3 +91,11 @@ fn cli_parse_bench() {
     }
 }
 
+#[test]
+fn cli_parse_checksum() {
+    match parse(&["ddm", "checksum", "/path/to/file.bin"]) {
+        CliCommand::Checksum { path } => assert_eq!(path, "/path/to/file.bin"),
+        _ => panic!("expected Checksum"),
+    }
+}
+

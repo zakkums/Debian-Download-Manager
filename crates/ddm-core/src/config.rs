@@ -3,11 +3,28 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+/// Retry policy parameters (optional section in config.toml).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetryConfig {
+    /// Maximum number of attempts per segment (including the first).
+    pub max_attempts: u32,
+    /// Base delay in seconds for exponential backoff (e.g. 0.25 = 250ms).
+    pub base_delay_secs: f64,
+    /// Maximum backoff delay in seconds.
+    pub max_delay_secs: u64,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: 5,
+            base_delay_secs: 0.25,
+            max_delay_secs: 30,
+        }
+    }
+}
+
 /// Global configuration loaded from `~/.config/ddm/config.toml`.
-///
-/// This is intentionally minimal for the initial milestone and will be
-/// extended with more tuning parameters (per-host policy, retry policy,
-/// bandwidth cap, etc.) in later steps.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DdmConfig {
     /// Maximum total concurrent HTTP connections across all jobs.
@@ -18,6 +35,15 @@ pub struct DdmConfig {
     pub min_segments: usize,
     /// Maximum number of segments per job.
     pub max_segments: usize,
+    /// Optional retry policy; if missing, built-in defaults are used.
+    #[serde(default)]
+    pub retry: Option<RetryConfig>,
+    /// Optional bandwidth cap in bytes per second (None = no cap). Not yet enforced.
+    #[serde(default)]
+    pub max_bytes_per_sec: Option<u64>,
+    /// Optional segment read/write buffer size in bytes (None = library default). Reserved.
+    #[serde(default)]
+    pub segment_buffer_bytes: Option<usize>,
 }
 
 impl Default for DdmConfig {
@@ -27,6 +53,9 @@ impl Default for DdmConfig {
             max_connections_per_host: 16,
             min_segments: 4,
             max_segments: 16,
+            retry: None,
+            max_bytes_per_sec: None,
+            segment_buffer_bytes: None,
         }
     }
 }
@@ -92,6 +121,32 @@ mod tests {
         assert_eq!(cfg.max_connections_per_host, 4);
         assert_eq!(cfg.min_segments, 2);
         assert_eq!(cfg.max_segments, 32);
+        assert!(cfg.retry.is_none());
+        assert!(cfg.max_bytes_per_sec.is_none());
+    }
+
+    #[test]
+    fn config_toml_retry_and_extensions() {
+        let toml = r#"
+            max_total_connections = 16
+            max_connections_per_host = 8
+            min_segments = 2
+            max_segments = 16
+            max_bytes_per_sec = 1_000_000
+            segment_buffer_bytes = 65536
+
+            [retry]
+            max_attempts = 3
+            base_delay_secs = 0.5
+            max_delay_secs = 15
+        "#;
+        let cfg: DdmConfig = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.max_bytes_per_sec, Some(1_000_000));
+        assert_eq!(cfg.segment_buffer_bytes, Some(65536));
+        let retry = cfg.retry.as_ref().unwrap();
+        assert_eq!(retry.max_attempts, 3);
+        assert!((retry.base_delay_secs - 0.5).abs() < 1e-9);
+        assert_eq!(retry.max_delay_secs, 15);
     }
 }
 
