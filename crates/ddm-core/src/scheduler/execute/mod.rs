@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::config::DdmConfig;
+use crate::config::{DdmConfig, DownloadBackend};
 use crate::downloader::DownloadSummary;
 use crate::downloader;
 use crate::resume_db::{JobMetadata, JobState, ResumeDb};
@@ -113,20 +113,36 @@ pub(super) async fn execute_download_phase(
         let policy = retry_policy;
         let tx = bitmap_tx.clone();
         let in_flight = Arc::clone(&in_flight_bytes);
+        let use_multi = cfg.download_backend == Some(DownloadBackend::Multi);
         tokio::task::spawn_blocking(move || -> Result<(segmenter::SegmentBitmap, DownloadSummary)> {
             let mut summary = DownloadSummary::default();
-            downloader::download_segments(
-                &url,
-                &headers,
-                &segments,
-                &storage,
-                &mut bitmap_copy,
-                Some(max_concurrent),
-                Some(&policy),
-                &mut summary,
-                Some(&tx),
-                Some(in_flight),
-            )?;
+            if use_multi {
+                downloader::multi::download_segments_multi(
+                    &url,
+                    &headers,
+                    &segments,
+                    &storage,
+                    &mut bitmap_copy,
+                    Some(max_concurrent),
+                    Some(&policy),
+                    &mut summary,
+                    Some(&tx),
+                    Some(in_flight),
+                )?;
+            } else {
+                downloader::download_segments(
+                    &url,
+                    &headers,
+                    &segments,
+                    &storage,
+                    &mut bitmap_copy,
+                    Some(max_concurrent),
+                    Some(&policy),
+                    &mut summary,
+                    Some(&tx),
+                    Some(in_flight),
+                )?;
+            }
             Ok((bitmap_copy, summary))
         })
         .await

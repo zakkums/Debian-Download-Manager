@@ -6,9 +6,9 @@ Use this file to see what's done and what's left. When starting a new chat, shar
 
 ## Status summary
 
-- **Done:** Core engine, resume DB, scheduler, downloader (Easy + threads), safe resume, retry/backoff, progress durability, abort deadlock fix, Range pre-write validation, redirect-safe header capture, saturating budget release, import-har, bench, HostPolicy persistence, global scheduling, docs, integration test.
+- **Done:** Core engine, resume DB, scheduler, downloader (Easy + threads + curl multi backend), safe resume, retry/backoff, progress durability, abort deadlock fix, Range pre-write validation, redirect-safe header capture, saturating budget release, import-har, bench, HostPolicy persistence, global scheduling, docs, integration test, curl multi phase 2 (config `download_backend`, Easy2 + Multi loop).
 - **In progress:** (none)
-- **Next (ROI order):** Curl multi (later).
+- **Next (ROI order):** (none).
 
 ---
 
@@ -26,7 +26,7 @@ Everything below is implemented and merged.
 - [x] **URL model (`url_model`)** – Derive safe filename from URL path or Content-Disposition; sanitize; multi-file module. Unit tests.
 - [x] **Segmenter (`segmenter`)** – `plan_segments`, `Segment`, `range_header_value()`, `SegmentBitmap` (to_bytes/from_bytes, set_completed/is_completed/all_completed). Unit tests.
 - [x] **Storage (`storage`)** – Create, preallocate (fallocate on Unix), write_at, sync, finalize (.part → final). Unit tests.
-- [x] **Downloader (`downloader`)** – Segmented Range GETs; one Easy handle per segment in a bounded worker pool of OS threads; Range 206 + Content-Range enforced (post-perform and pre-write). Unit test for bitmap filtering.
+- [x] **Downloader (`downloader`)** – Segmented Range GETs; one Easy handle per segment in a bounded worker pool of OS threads; Range 206 + Content-Range enforced (post-perform and pre-write). Optional curl multi backend (`download_backend = "multi"` in config): single-threaded Easy2 + Multi loop with per-segment retry and backoff. Unit test for bitmap filtering.
 - [x] **Safe resume (`safe_resume`)** – Validate ETag/Last-Modified/size; force-restart if remote changed; download only missing segments. Unit tests.
 - [x] **Scheduler (`scheduler`)** – run_one_job / run_next_job; per-host and global connection limits; `GlobalConnectionBudget`; execute phase with progress coalescing and durable bitmap commits.
 - [x] **Retry / backoff (`retry`)** – ErrorKind, RetryPolicy, classify SegmentError (Curl, Http, InvalidRangeResponse, PartialTransfer, Storage), run_with_retry. Tests.
@@ -68,8 +68,8 @@ Everything below is implemented and merged.
 
 - [x] **CLI scaffold** – clap subcommands: add, run, status, pause, resume, remove, import-har, bench, checksum.
 - [x] **CLI wired to DB** – add/status/pause/resume/remove use ResumeDb; async main with tokio.
-- [x] **Tests** – Unit tests in ddm-core (config, resolver, resume_db, fetch_head, url_model, segmenter, storage, downloader, safe_resume, retry, host_policy, bench); CLI parse tests. `cargo test` passes.
-- [x] **Integration test** – Local HTTP server with Range support (`tests/common/range_server.rs`); `tests/integration_range_download.rs`: multi-segment download against local server, file content verified. Resume behavior covered by unit tests (bitmap, safe_resume). `ResumeDb::open_at(path)` added for test DB placement.
+- [x] **Tests** – Unit tests in ddm-core (config, resolver, resume_db, fetch_head, url_model, segmenter, storage, downloader, safe_resume, retry, host_policy, bench); downloader/multi handler tests (header clear, write 206/non-206); CLI parse tests. `cargo test` passes.
+- [x] **Integration test** – Local HTTP server with Range support (`tests/common/range_server.rs`); `tests/integration_range_download.rs`: multi-segment download (Easy and multi backend) against local server, file content verified. Resume behavior covered by unit tests (bitmap, safe_resume). `ResumeDb::open_at(path)` added for test DB placement.
 
 ---
 
@@ -79,10 +79,27 @@ Everything below is implemented and merged.
 
 ---
 
+## Done (this session)
+
+- [x] **Curl multi – phase 2** – Implemented curl::multi handle; single-threaded event loop, Easy2 + Handler per segment; config `download_backend` (easy | multi); parity with Easy+threads (206/Content-Range, progress, bitmap). No per-segment retry in multi yet.
+
+---
+
 ## Not started (in priority order, best ROI)
 
-- [ ] **Curl multi (later)** – Consider for efficiency; Easy + threads fine for current segment counts.
-- [ ] **Tests for new code** – Unit tests for new modules as added; update PROGRESS when adding tests.
+- (none)
+
+---
+
+## Done (tests for new code)
+
+- [x] **Tests for multi backend** – Unit tests for multi handler (header clear on HTTP/, write rejects non-206, write accepts 206 and writes at offset); integration test `multi_backend_download_completes_and_file_matches` runs full download with `download_backend = "multi"`.
+
+---
+
+## Done (retry in multi backend)
+
+- [x] **Retry in multi backend** – Per-segment retry with backoff inside multi loop; optional `RetryPolicy` passed from `download_segments_multi`; retry_after queue with `Instant`; refill from pending and retry_after; `next_retry_wait_ms` for wait timing; `refill.rs` and `result.rs` keep `run.rs` < 200 lines.
 
 ---
 

@@ -8,6 +8,9 @@
 mod run;
 mod segment;
 
+/// Curl multi backend (phase 1: skeleton; phase 2: curl::multi implementation).
+pub mod multi;
+
 use anyhow::Result;
 use crate::retry::{RetryPolicy, SegmentError};
 use crate::segmenter::{Segment, SegmentBitmap};

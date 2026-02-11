@@ -24,6 +24,15 @@ impl Default for RetryConfig {
     }
 }
 
+/// Download backend: Easy+threads (one Easy per segment in OS threads) or curl multi (single-threaded, multiple Easy2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DownloadBackend {
+    #[default]
+    Easy,
+    Multi,
+}
+
 /// Global configuration loaded from `~/.config/ddm/config.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DdmConfig {
@@ -44,6 +53,9 @@ pub struct DdmConfig {
     /// Optional segment read/write buffer size in bytes (None = library default). Reserved.
     #[serde(default)]
     pub segment_buffer_bytes: Option<usize>,
+    /// Download backend: "easy" (default) or "multi". Easy = one Easy handle per segment in threads; multi = curl multi.
+    #[serde(default)]
+    pub download_backend: Option<DownloadBackend>,
 }
 
 impl Default for DdmConfig {
@@ -56,6 +68,7 @@ impl Default for DdmConfig {
             retry: None,
             max_bytes_per_sec: None,
             segment_buffer_bytes: None,
+            download_backend: None,
         }
     }
 }
@@ -123,6 +136,28 @@ mod tests {
         assert_eq!(cfg.max_segments, 32);
         assert!(cfg.retry.is_none());
         assert!(cfg.max_bytes_per_sec.is_none());
+    }
+
+    #[test]
+    fn config_toml_download_backend() {
+        let toml = r#"
+            max_total_connections = 8
+            max_connections_per_host = 4
+            min_segments = 2
+            max_segments = 16
+            download_backend = "multi"
+        "#;
+        let cfg: DdmConfig = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.download_backend, Some(DownloadBackend::Multi));
+        let toml_easy = r#"
+            max_total_connections = 8
+            max_connections_per_host = 4
+            min_segments = 2
+            max_segments = 16
+            download_backend = "easy"
+        "#;
+        let cfg_easy: DdmConfig = toml::from_str(toml_easy).unwrap();
+        assert_eq!(cfg_easy.download_backend, Some(DownloadBackend::Easy));
     }
 
     #[test]

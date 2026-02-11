@@ -151,7 +151,7 @@ pub(super) fn download_one_segment(
 }
 
 /// Parse HTTP status code from the first header line (e.g. "HTTP/1.1 206 ...").
-fn parse_http_status(headers: &[String]) -> Option<u32> {
+pub(crate) fn parse_http_status(headers: &[String]) -> Option<u32> {
     let first = headers.first()?.trim();
     let part = first.split_whitespace().nth(1)?;
     part.parse().ok()
