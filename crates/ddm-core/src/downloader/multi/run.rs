@@ -19,52 +19,6 @@ use super::super::CurlOptions;
 
 const COALESCE_PROGRESS_EVERY: usize = 2;
 
-fn add_easy_to_multi(
-    multi: &curl::multi::Multi,
-    url: &str,
-    headers: &HashMap<String, String>,
-    storage: &StorageWriter,
-    in_flight_bytes: Option<&Arc<Vec<AtomicU64>>>,
-    index: usize,
-    segment: Segment,
-    curl: CurlOptions,
-) -> Result<curl::multi::Easy2Handle<SegmentHandler>> {
-    let handler = SegmentHandler::new(
-        index,
-        segment,
-        storage.clone(),
-        in_flight_bytes.map(Arc::clone),
-    );
-    let mut easy = curl::easy::Easy2::new(handler);
-    easy.url(url).map_err(|e| anyhow::anyhow!("curl url: {}", e))?;
-    easy.follow_location(true).map_err(|e| anyhow::anyhow!("curl: {}", e))?;
-    if let Some(speed) = curl.max_recv_speed {
-        easy.max_recv_speed(speed).map_err(|e| anyhow::anyhow!("curl: {}", e))?;
-    }
-    if let Some(sz) = curl.buffer_size {
-        easy.buffer_size(sz).map_err(|e| anyhow::anyhow!("curl: {}", e))?;
-    }
-    easy.connect_timeout(Duration::from_secs(30))
-        .map_err(|e| anyhow::anyhow!("curl: {}", e))?;
-    easy.low_speed_limit(1024).map_err(|e| anyhow::anyhow!("curl: {}", e))?;
-    easy.low_speed_time(Duration::from_secs(60))
-        .map_err(|e| anyhow::anyhow!("curl: {}", e))?;
-    easy.timeout(Duration::from_secs(3600))
-        .map_err(|e| anyhow::anyhow!("curl: {}", e))?;
-    let end = segment.end.saturating_sub(1);
-    easy.range(&format!("{}-{}", segment.start, end))
-        .map_err(|e| anyhow::anyhow!("curl: {}", e))?;
-    if !headers.is_empty() {
-        let mut list = curl::easy::List::new();
-        for (k, v) in headers {
-            list.append(&format!("{}: {}", k.trim(), v.trim()))
-                .map_err(|e| anyhow::anyhow!("curl: {}", e))?;
-        }
-        easy.http_headers(list).map_err(|e| anyhow::anyhow!("curl: {}", e))?;
-    }
-    multi.add2(easy).map_err(|e| anyhow::anyhow!("curl multi add: {}", e))
-}
-
 /// Run incomplete segments using curl multi: add up to max_concurrent Easy2 handles,
 /// perform/wait/messages loop, process completions and add more until done or error.
 /// When retry_policy is Some, retryable failures are re-queued with backoff.
@@ -89,15 +43,23 @@ pub(super) fn run_multi(
     let multi = curl::multi::Multi::new();
     let mut pending: VecDeque<(usize, Segment)> = incomplete.into_iter().collect();
     let mut retry_after: Vec<(Instant, usize, Segment, u32)> = Vec::new();
-    type ActiveItem = (curl::multi::Easy2Handle<SegmentHandler>, usize, Segment, u32);
-    let mut active: Vec<ActiveItem> = Vec::new();
+    let mut active: Vec<(curl::multi::Easy2Handle<SegmentHandler>, usize, Segment, u32)> = Vec::new();
     let mut first_error: Option<anyhow::Error> = None;
     let mut completed_since_send = 0usize;
 
     let to_add = max_concurrent.min(pending.len());
     for _ in 0..to_add {
         if let Some((index, segment)) = pending.pop_front() {
-            let h = add_easy_to_multi(&multi, url, headers, storage, in_flight_bytes.as_ref(), index, segment, curl)?;
+            let h = refill::add_easy_to_multi(
+                &multi,
+                url,
+                headers,
+                storage,
+                in_flight_bytes.as_ref(),
+                index,
+                segment,
+                curl,
+            )?;
             active.push((h, index, segment, 1));
         }
     }
@@ -154,7 +116,18 @@ pub(super) fn run_multi(
                 }
             }
         }
-        refill_active(&multi, url, headers, storage, in_flight_bytes.as_ref(), max_concurrent, &mut active, &mut pending, &mut retry_after, curl)?;
+        refill::refill_active(
+            &multi,
+            url,
+            headers,
+            storage,
+            in_flight_bytes.as_ref(),
+            max_concurrent,
+            &mut active,
+            &mut pending,
+            &mut retry_after,
+            curl,
+        )?;
         if first_error.is_some() {
             break;
         }
@@ -172,34 +145,6 @@ pub(super) fn run_multi(
     }
     if let Some(e) = first_error {
         return Err(e);
-    }
-    Ok(())
-}
-
-fn refill_active(
-    multi: &curl::multi::Multi,
-    url: &str,
-    headers: &HashMap<String, String>,
-    storage: &StorageWriter,
-    in_flight_bytes: Option<&Arc<Vec<AtomicU64>>>,
-    max_concurrent: usize,
-    active: &mut Vec<(curl::multi::Easy2Handle<SegmentHandler>, usize, Segment, u32)>,
-    pending: &mut VecDeque<(usize, Segment)>,
-    retry_after: &mut Vec<(Instant, usize, Segment, u32)>,
-    curl: CurlOptions,
-) -> Result<()> {
-    let now = Instant::now();
-    while active.len() < max_concurrent {
-        if let Some((index, segment)) = pending.pop_front() {
-            let h = add_easy_to_multi(multi, url, headers, storage, in_flight_bytes, index, segment, curl)?;
-            active.push((h, index, segment, 1));
-        } else if let Some(pos) = retry_after.iter().position(|(t, ..)| now >= *t) {
-            let (_, index, segment, attempt) = retry_after.remove(pos);
-            let h = add_easy_to_multi(multi, url, headers, storage, in_flight_bytes, index, segment, curl)?;
-            active.push((h, index, segment, attempt));
-        } else {
-            break;
-        }
     }
     Ok(())
 }

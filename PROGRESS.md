@@ -7,7 +7,7 @@ Use this file to see what's done and what's left. When starting a new chat, shar
 ## Status summary
 
 - **Done:** Core engine, resume DB, scheduler, segmented downloader (Easy + threads and optional curl multi backend), safe resume, retry/backoff, durable progress, import-har, bench, HostPolicy persistence, global scheduling, integration tests, Tier 0 + Tier 1 roadmap items, Tier 2 (bandwidth cap + buffer tuning).
-- **In progress:** (none)
+- **In progress:** Tier 3 – real control plane (pause/resume/cancel).
 - **Current step:** **Tier 3** (true pause/resume/cancel control plane).
 
 ---
@@ -95,7 +95,7 @@ Older detail is preserved in:
 
 ## In progress
 
-- (none)
+- **Tier 3: control plane design** – settle on an in-process control socket (minimum viable) and job control API so `ddm pause/resume/remove` can signal the running scheduler.
 
 ---
 
@@ -115,6 +115,7 @@ Older detail is preserved in:
 - [x] **Tier 2: max_bytes_per_sec + segment_buffer_bytes** – Applied per-handle curl options in Easy, Easy2/multi, and single-stream fallback; global cap divided by concurrency.
 - [x] **Curl multi – phase 2** – Implemented curl::multi handle; single-threaded event loop, Easy2 + Handler per segment; config `download_backend` (easy | multi); parity with Easy+threads (206/Content-Range, progress, bitmap). Per-segment retry in multi added later.
 - [x] **Execute module &lt;200 lines** – Split `scheduler/execute/mod.rs` (was 201 lines) into `execute/run_download.rs`; all source files now &lt;200 lines per code layout guideline.
+- [x] **Downloader run modules &lt;200 lines** – Split `downloader/run.rs` (unbounded runner) into `downloader/run/unbounded.rs` and moved curl-multi refill helpers into `downloader/multi/refill.rs` so both `downloader/run.rs` and `downloader/multi/run.rs` stay &lt;200 lines while keeping behavior and tests unchanged.
 
 ---
 
