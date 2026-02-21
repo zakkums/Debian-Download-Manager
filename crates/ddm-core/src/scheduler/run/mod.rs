@@ -1,8 +1,9 @@
 //! Run one job or the next queued job; supports sequential and shared (parallel) policy.
 
+mod common;
+mod fallback;
 mod shared;
 mod single;
-mod fallback;
 
 use anyhow::Result;
 use std::path::Path;

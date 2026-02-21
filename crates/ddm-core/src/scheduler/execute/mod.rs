@@ -1,5 +1,6 @@
 //! Execute the download phase of a single job: storage, segments, progress, finalize.
 
+mod finish;
 mod guard;
 mod progress_worker;
 mod run_download;
@@ -14,7 +15,7 @@ use std::time::{Duration, Instant};
 use crate::config::{DdmConfig, DownloadBackend};
 use crate::control::JobAborted;
 use crate::downloader::DownloadSummary;
-use crate::resume_db::{JobMetadata, JobState, ResumeDb};
+use crate::resume_db::{JobState, ResumeDb};
 use crate::retry::RetryPolicy;
 use crate::segmenter;
 use crate::storage;
@@ -169,48 +170,22 @@ pub(super) async fn execute_download_phase(
     drop(bitmap_tx);
     progress_handle.await.context("progress writer join")?;
     let download_elapsed = download_start.elapsed();
-    if let Some(p) = host_policy {
-        p.record_job_outcome(
-            url,
-            segment_count_u,
-            bytes_this_run,
-            download_elapsed,
-            summary.throttle_events,
-            summary.error_events,
-        )
-        .context("record job outcome for adaptive policy")?;
-    } else if let Some(ref arc) = shared_policy {
-        arc.lock()
-            .await
-            .record_job_outcome(
-                url,
-                segment_count_u,
-                bytes_this_run,
-                download_elapsed,
-                summary.throttle_events,
-                summary.error_events,
-            )
-            .context("record job outcome for adaptive policy")?;
-    }
-
-    storage_writer.sync()?;
-
-    let meta = JobMetadata {
-        final_filename: job.final_filename.clone(),
-        temp_filename: job.temp_filename.clone(),
-        total_size: job.total_size,
-        etag: job.etag.clone(),
-        last_modified: job.last_modified.clone(),
-        segment_count: job.segment_count,
-        completed_bitmap: bitmap.to_bytes(segment_count_u),
-    };
-    db.update_metadata(job_id, &meta).await?;
-
-    if bitmap.all_completed(segment_count_u) {
-        storage_writer.finalize(final_path)?;
-        db.set_state(job_id, JobState::Completed).await?;
-        tracing::info!("job {} completed: {}", job_id, final_path.display());
-    }
+    finish::finish_after_download(
+        db,
+        job_id,
+        job,
+        url,
+        segment_count_u,
+        bytes_this_run,
+        download_elapsed,
+        &summary,
+        bitmap,
+        &storage_writer,
+        final_path,
+        host_policy,
+        shared_policy.as_ref(),
+    )
+    .await?;
 
     Ok(())
 }

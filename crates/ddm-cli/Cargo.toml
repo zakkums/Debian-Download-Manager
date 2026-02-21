@@ -13,6 +13,8 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
+clap_complete = "4.5"
+clap_mangen = "0.2"
 tracing = "0.1"
 
 ddm-core = { path = "../ddm-core" }

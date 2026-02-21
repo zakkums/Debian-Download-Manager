@@ -8,7 +8,7 @@ Use this file to see what's done and what's left. When starting a new chat, shar
 
 - **Done:** Core engine, resume DB, scheduler, segmented downloader (Easy + threads and optional curl multi backend), safe resume, retry/backoff, durable progress, import-har, bench, HostPolicy persistence, global scheduling, integration tests, Tier 0 + Tier 1 roadmap items, Tier 2 (bandwidth cap + buffer tuning).
 - **In progress:** (none).
-- **Current step:** **Tier 4** (packaging, README, completions) or polish.
+- **Current step:** **Tier 4** — done (README, LICENSE, rust-toolchain, completions, manpage). Optional polish next.
 - **Urgent:** ~~Parallel scheduler job-claim race~~ **Fixed.** ~~Tier 3 control plane~~ **Done:** control socket + abort token; pause stops in-flight download.
 
 ---
@@ -20,9 +20,13 @@ Use this file to see what's done and what's left. When starting a new chat, shar
 - **True pause:** `ddm run` starts a control socket; `ddm pause <id>` sends a signal; the running job stops within ~1s, progress is saved, state set to Paused. Resume continues without losing completed segments (re-run `ddm run`).
 - **Cancel:** Same mechanism (control socket "cancel &lt;id&gt;" or remove the job and use pause to stop first).
 
-### Next (Tier 4)
+### Tier 4 done
 
-- README, LICENSE, rust-toolchain, completions/manpage.
+- README.md (install, quick start, commands, config, resume/pause).
+- LICENSE-MIT and LICENSE-APACHE (dual license).
+- rust-toolchain.toml (stable + rustfmt, clippy).
+- Completions: `ddm completions <shell>` (clap_complete).
+- Manpage: `ddm manpage` (clap_mangen); redirect to e.g. share/man/man1/ddm.1.
 
 ---
 
@@ -146,7 +150,7 @@ Older detail is preserved in:
 
 ## Not started (next in ROI order)
 
-- **Tier 4:** README, LICENSE, rust-toolchain, completions/manpage.
+- Optional polish (e.g. Pause help text: "stops running download via control socket").
 
 ---
 
@@ -166,6 +170,9 @@ Older detail is preserved in:
 - [x] **Curl multi – phase 2** – Implemented curl::multi handle; single-threaded event loop, Easy2 + Handler per segment; config `download_backend` (easy | multi); parity with Easy+threads (206/Content-Range, progress, bitmap). Per-segment retry in multi added later.
 - [x] **Execute module &lt;200 lines** – Split `scheduler/execute/mod.rs` (was 201 lines) into `execute/run_download.rs`; all source files now &lt;200 lines per code layout guideline.
 - [x] **Downloader run modules &lt;200 lines** – Split `downloader/run.rs` (unbounded runner) into `downloader/run/unbounded.rs` and moved curl-multi refill helpers into `downloader/multi/refill.rs` so both `downloader/run.rs` and `downloader/multi/run.rs` stay &lt;200 lines while keeping behavior and tests unchanged.
+- [x] **Execute mod &lt;200 lines** – Split `scheduler/execute/mod.rs` (216 lines) into `execute/finish.rs` (post-download: record outcome, sync, metadata, finalize).
+- [x] **Run shared/single &lt;200 lines** – Added `scheduler/run/common.rs` with `resolve_filenames` and `paths_and_overwrite_check`; `shared.rs` and `single.rs` now &lt;200 lines.
+- [x] **Tier 4** – README.md, LICENSE-MIT, LICENSE-APACHE, rust-toolchain.toml, `ddm completions <shell>`, `ddm manpage`.
 
 ---
 

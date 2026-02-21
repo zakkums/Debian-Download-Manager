@@ -4,7 +4,7 @@ mod commands;
 mod control_socket;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use ddm_core::config;
 use ddm_core::resume_db::ResumeDb;
 use std::path::Path;
@@ -50,7 +50,7 @@ pub enum CliCommand {
     /// Show status of all jobs.
     Status,
 
-    /// Pause a job by ID. Only affects scheduling: the job will not be picked on the next run. Does not stop an already running download.
+    /// Pause a job by ID. If `ddm run` is active, signals that job to stop within ~1s and saves progress; otherwise the job will not be picked on the next run.
     Pause {
         /// Job identifier.
         id: i64,
@@ -95,11 +95,38 @@ pub enum CliCommand {
         /// Path to the file.
         path: String,
     },
+
+    /// Print shell completion script for the given shell.
+    Completions {
+        /// Shell (bash, zsh, fish, etc.).
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+
+    /// Print man page (e.g. ddm manpage > share/man/man1/ddm.1).
+    Manpage,
 }
 
 impl CliCommand {
     pub async fn run_from_args() -> Result<()> {
         let cli = Cli::parse();
+
+        // Completions and manpage do not need config or DB.
+        match &cli.command {
+            CliCommand::Completions { shell } => {
+                let mut cmd = Cli::command();
+                clap_complete::generate(*shell, &mut cmd, "ddm", &mut std::io::stdout());
+                return Ok(());
+            }
+            CliCommand::Manpage => {
+                let cmd = Cli::command();
+                let man = clap_mangen::Man::new(cmd);
+                man.render(&mut std::io::stdout())?;
+                return Ok(());
+            }
+            _ => {}
+        }
+
         let cfg = config::load_or_init()?;
         tracing::debug!("loaded config: {:?}", cfg);
         let db = ResumeDb::open_default().await?;
@@ -129,6 +156,9 @@ impl CliCommand {
             }
             CliCommand::Bench { url } => run_bench(&url).await?,
             CliCommand::Checksum { path } => run_checksum(Path::new(&path)).await?,
+            CliCommand::Completions { .. } | CliCommand::Manpage => {
+                unreachable!("handled above before opening DB")
+            }
         }
 
         Ok(())

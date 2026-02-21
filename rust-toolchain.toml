@@ -1,0 +1,4 @@
+# Pin toolchain for consistent builds (e.g. CI and packaging).
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
