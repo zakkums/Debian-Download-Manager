@@ -21,6 +21,7 @@ use super::CurlOptions;
 
 /// Runs segment downloads via the curl multi backend (Easy2 + Multi handle).
 /// When retry_policy is Some, retryable segment failures are retried with backoff.
+/// If abort is set and becomes true, the run stops with JobAborted.
 pub fn download_segments_multi(
     url: &str,
     custom_headers: &HashMap<String, String>,
@@ -32,6 +33,7 @@ pub fn download_segments_multi(
     summary_out: &mut DownloadSummary,
     progress_tx: Option<&tokio::sync::mpsc::Sender<Vec<u8>>>,
     in_flight_bytes: Option<Arc<Vec<AtomicU64>>>,
+    abort: Option<Arc<std::sync::atomic::AtomicBool>>,
     curl: CurlOptions,
 ) -> Result<()> {
     let incomplete: Vec<(usize, Segment)> = segments
@@ -58,6 +60,7 @@ pub fn download_segments_multi(
         summary_out,
         progress_tx,
         in_flight_bytes,
+        abort,
         retry_policy.copied(),
         curl,
     )
@@ -92,6 +95,7 @@ mod tests {
             Some(2),
             None,
             &mut summary,
+            None,
             None,
             None,
             CurlOptions::default(),

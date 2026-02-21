@@ -1,8 +1,9 @@
 use anyhow::Result;
 use std::collections::HashMap;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use crate::control::JobAborted;
 use crate::downloader::{CurlOptions, DownloadSummary, SegmentResult};
 use crate::downloader::segment;
 use crate::retry::{classify, run_with_retry, ErrorKind, RetryPolicy};
@@ -21,9 +22,14 @@ pub fn run_unbounded(
     summary_out: &mut DownloadSummary,
     progress_tx: Option<&tokio::sync::mpsc::Sender<Vec<u8>>>,
     in_flight_bytes: Option<Arc<Vec<AtomicU64>>>,
+    abort: Option<Arc<std::sync::atomic::AtomicBool>>,
     curl: CurlOptions,
 ) -> Result<()> {
-    let results: Vec<(usize, SegmentResult)> = incomplete
+    if abort.as_ref().map(|a| a.load(Ordering::Relaxed)).unwrap_or(false) {
+        return Err(anyhow::anyhow!(JobAborted));
+    }
+    type JoinErr = Box<dyn std::any::Any + Send>;
+    let join_results: Vec<Result<(usize, SegmentResult), JoinErr>> = incomplete
         .into_iter()
         .map(|(index, segment)| {
             let u = url.clone();
@@ -32,7 +38,7 @@ pub fn run_unbounded(
             let policy = retry_policy.clone();
             let curl_opts = curl;
             let in_flight = in_flight_bytes.as_ref().map(|v| (Arc::clone(v), index));
-            let res = std::thread::spawn(move || {
+            std::thread::spawn(move || {
                 match policy.as_ref() {
                     Some(p) => run_with_retry(p, || {
                         segment::download_one_segment(&u, &h, &segment, &st, in_flight.clone(), curl_opts)
@@ -41,14 +47,22 @@ pub fn run_unbounded(
                 }
             })
             .join()
-            .unwrap_or_else(|e| panic!("worker panicked: {:?}", e));
-            (index, res)
+            .map(|res| (index, res))
         })
         .collect();
 
     let mut first_error: Option<anyhow::Error> = None;
     let mut completed_since_send = 0usize;
-    for (index, res) in results {
+    for join_result in join_results {
+        let (index, res) = match join_result {
+            Ok(pair) => pair,
+            Err(panic) => {
+                if first_error.is_none() {
+                    first_error = Some(anyhow::anyhow!("worker panicked: {:?}", panic));
+                }
+                continue;
+            }
+        };
         match res {
             Ok(()) => {
                 bitmap.set_completed(index);

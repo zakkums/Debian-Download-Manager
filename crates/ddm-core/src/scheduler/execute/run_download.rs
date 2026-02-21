@@ -10,7 +10,7 @@ use crate::segmenter;
 use crate::storage;
 
 /// Runs segment download on a blocking thread. Chooses Easy (threads) or Multi
-/// based on `use_multi`. Returns updated bitmap and summary.
+/// based on `use_multi`. If `abort` is set and becomes true, returns JobAborted.
 pub(super) fn run_download_blocking(
     url: &str,
     headers: &std::collections::HashMap<String, String>,
@@ -22,6 +22,7 @@ pub(super) fn run_download_blocking(
     summary: &mut DownloadSummary,
     bitmap_tx: Option<&tokio::sync::mpsc::Sender<Vec<u8>>>,
     in_flight: Option<Arc<Vec<std::sync::atomic::AtomicU64>>>,
+    abort: Option<Arc<std::sync::atomic::AtomicBool>>,
     use_multi: bool,
     curl: CurlOptions,
 ) -> anyhow::Result<()> {
@@ -38,6 +39,7 @@ pub(super) fn run_download_blocking(
             summary,
             bitmap_tx,
             in_flight,
+            abort,
             curl,
         )
     } else {
@@ -52,6 +54,7 @@ pub(super) fn run_download_blocking(
             summary,
             bitmap_tx,
             in_flight,
+            abort,
             curl,
         )
     }

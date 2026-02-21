@@ -13,7 +13,7 @@ use crate::resume_db::ResumeDb;
 
 use super::budget::GlobalConnectionBudget;
 use super::progress::ProgressStats;
-use super::run::{next_queued_job_id, run_one_job_shared};
+use super::run::run_one_job_shared;
 
 /// Runs queued jobs with up to `max_concurrent` jobs in flight at once.
 /// Uses a shared `Arc<Mutex<HostPolicy>>` and `Arc<GlobalConnectionBudget>>`
@@ -21,6 +21,7 @@ use super::run::{next_queued_job_id, run_one_job_shared};
 ///
 /// Replaces `host_policy` with a temporary for the run and restores the
 /// updated policy when done (so the caller can save it).
+/// If `job_control` is `Some`, running jobs can be paused via the control socket.
 pub async fn run_jobs_parallel(
     db: &ResumeDb,
     cfg: &DdmConfig,
@@ -31,6 +32,7 @@ pub async fn run_jobs_parallel(
     progress_tx: Option<tokio::sync::mpsc::Sender<ProgressStats>>,
     global_budget: Arc<GlobalConnectionBudget>,
     max_concurrent: usize,
+    job_control: Option<std::sync::Arc<crate::control::JobControl>>,
 ) -> Result<u32> {
     let max_concurrent = max_concurrent.max(1);
     let shared_policy = Arc::new(tokio::sync::Mutex::new(std::mem::replace(
@@ -43,7 +45,7 @@ pub async fn run_jobs_parallel(
 
     loop {
         while join_set.len() < max_concurrent {
-            let Some(job_id) = next_queued_job_id(db).await? else {
+            let Some(job_id) = db.claim_next_queued_job().await? else {
                 break;
             };
             let db = db.clone();
@@ -53,6 +55,7 @@ pub async fn run_jobs_parallel(
             let tx = progress_tx.clone();
             let budget = Arc::clone(&global_budget);
             let overwrite = overwrite;
+            let job_control = job_control.clone();
             join_set.spawn(async move {
                 run_one_job_shared(
                     &db,
@@ -64,6 +67,7 @@ pub async fn run_jobs_parallel(
                     policy,
                     tx,
                     Some(budget),
+                    job_control,
                 )
                 .await
             });

@@ -12,6 +12,7 @@ use crate::segmenter;
 use crate::storage;
 use crate::url_model;
 use crate::host_policy::HostPolicy;
+use crate::control::JobControl;
 
 use super::super::budget::GlobalConnectionBudget;
 use super::super::choose;
@@ -35,6 +36,7 @@ pub async fn run_one_job(
     host_policy: &mut HostPolicy,
     progress_tx: Option<&tokio::sync::mpsc::Sender<ProgressStats>>,
     global_budget: Option<&GlobalConnectionBudget>,
+    job_control: Option<std::sync::Arc<JobControl>>,
 ) -> Result<()> {
     let mut job = db
         .get_job(job_id)
@@ -166,6 +168,7 @@ pub async fn run_one_job(
 
     db.set_state(job_id, JobState::Running).await?;
 
+    let abort = job_control.as_ref().map(|c| c.register(job_id));
     let run_result = execute::execute_download_phase(
         db,
         job_id,
@@ -184,8 +187,12 @@ pub async fn run_one_job(
         None,
         progress_tx,
         global_budget,
+        abort,
     )
     .await;
+    if let Some(ref c) = job_control {
+        c.unregister(job_id);
+    }
 
     if run_result.is_err() {
         let _ = db.set_state(job_id, JobState::Error).await;

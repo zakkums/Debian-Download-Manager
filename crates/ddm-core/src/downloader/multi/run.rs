@@ -3,10 +3,11 @@
 
 use anyhow::Result;
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::control::JobAborted;
 use crate::retry::{classify, ErrorKind, RetryDecision, RetryPolicy};
 use crate::segmenter::{Segment, SegmentBitmap};
 use crate::storage::StorageWriter;
@@ -33,6 +34,7 @@ pub(super) fn run_multi(
     summary_out: &mut DownloadSummary,
     progress_tx: Option<&tokio::sync::mpsc::Sender<Vec<u8>>>,
     in_flight_bytes: Option<Arc<Vec<AtomicU64>>>,
+    abort: Option<Arc<AtomicBool>>,
     retry_policy: Option<RetryPolicy>,
     curl: CurlOptions,
 ) -> Result<()> {
@@ -65,6 +67,12 @@ pub(super) fn run_multi(
     }
 
     while !active.is_empty() {
+        if abort.as_ref().map(|a| a.load(Ordering::Relaxed)).unwrap_or(false) {
+            if first_error.is_none() {
+                first_error = Some(anyhow::anyhow!(JobAborted));
+            }
+            break;
+        }
         let running = multi.perform().map_err(|e| anyhow::anyhow!("curl multi perform: {}", e))?;
         let mut completed_indices: Vec<usize> = Vec::new();
         multi.messages(|msg| {

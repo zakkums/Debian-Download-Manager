@@ -16,4 +16,5 @@ pub mod resume_db;
 pub mod checksum;
 pub mod resolver;
 pub mod host_policy;
+pub mod control;
 

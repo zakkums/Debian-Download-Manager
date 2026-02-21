@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::config::{DdmConfig, DownloadBackend};
+use crate::control::JobAborted;
 use crate::downloader::DownloadSummary;
 use crate::resume_db::{JobMetadata, JobState, ResumeDb};
 use crate::retry::RetryPolicy;
@@ -48,6 +49,7 @@ pub(super) async fn execute_download_phase(
     shared_policy: Option<std::sync::Arc<tokio::sync::Mutex<HostPolicy>>>,
     progress_tx: Option<&tokio::sync::mpsc::Sender<ProgressStats>>,
     global_budget: Option<&GlobalConnectionBudget>,
+    abort: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<()> {
     if needs_metadata && temp_path.exists() {
         tokio::fs::remove_file(temp_path)
@@ -114,7 +116,7 @@ pub(super) async fn execute_download_phase(
 
     let mut bitmap_copy = bitmap.clone();
     let use_multi = cfg.download_backend == Some(DownloadBackend::Multi);
-    let (bitmap_result, summary) = {
+    let download_result = {
         let url = url.to_string();
         let headers = headers.clone();
         let segments = segments.to_vec();
@@ -123,6 +125,7 @@ pub(super) async fn execute_download_phase(
         let policy = retry_policy;
         let tx = bitmap_tx.clone();
         let in_flight = Arc::clone(&in_flight_bytes);
+        let abort_clone = abort.clone();
         let curl = curl_opts;
         tokio::task::spawn_blocking(move || -> Result<(segmenter::SegmentBitmap, DownloadSummary)> {
             let mut summary = DownloadSummary::default();
@@ -137,13 +140,28 @@ pub(super) async fn execute_download_phase(
                 &mut summary,
                 Some(&tx),
                 Some(in_flight),
+                abort_clone,
                 use_multi,
                 curl,
             )?;
             Ok((bitmap_copy, summary))
         })
         .await
-        .context("download task join")??
+        .context("download task join")?
+    };
+
+    let (bitmap_result, summary) = match download_result {
+        Ok((bm, s)) => (bm, s),
+        Err(e) => {
+            if e.downcast_ref::<JobAborted>().is_some() {
+                drop(bitmap_tx);
+                let _ = progress_handle.await;
+                db.set_state(job_id, JobState::Paused).await?;
+                tracing::info!("job {} paused by user", job_id);
+                return Ok(());
+            }
+            return Err(e);
+        }
     };
 
     *bitmap = bitmap_result;

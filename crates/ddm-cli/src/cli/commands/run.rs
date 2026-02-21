@@ -2,12 +2,15 @@
 
 use anyhow::Result;
 use ddm_core::config::DdmConfig;
+use ddm_core::control::JobControl;
 use ddm_core::host_policy::HostPolicy;
 use ddm_core::resume_db::ResumeDb;
 use ddm_core::scheduler::{self, GlobalConnectionBudget, ProgressStats};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
+
+use crate::cli::control_socket;
 
 pub async fn run_scheduler(
     db: &ResumeDb,
@@ -31,6 +34,13 @@ pub async fn run_scheduler(
         }
         _ => HostPolicy::new(cfg.min_segments, cfg.max_segments),
     };
+
+    let job_control = Arc::new(JobControl::new());
+    if let Ok(socket_path) = ddm_core::control::default_control_socket_path() {
+        if control_socket::spawn_control_listener(Arc::clone(&job_control), &socket_path).is_ok() {
+            tracing::debug!(path = %socket_path.display(), "control socket listening");
+        }
+    }
 
     let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<ProgressStats>(16);
     const PROGRESS_INTERVAL_MS: u64 = 500;
@@ -75,6 +85,7 @@ pub async fn run_scheduler(
             Some(progress_tx),
             Arc::clone(&global_budget),
             jobs,
+            Some(Arc::clone(&job_control)),
         )
         .await?
     } else {
@@ -89,6 +100,7 @@ pub async fn run_scheduler(
             &mut host_policy,
             Some(&progress_tx),
             Some(budget_ref),
+            Some(Arc::clone(&job_control)),
         )
         .await?
         {

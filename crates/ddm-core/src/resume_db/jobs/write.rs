@@ -1,11 +1,49 @@
 //! Job write operations: add, update, state, remove.
 
 use anyhow::Result;
+use sqlx::Row;
 
 use super::super::db::{unix_timestamp, ResumeDb};
 use super::super::types::{JobId, JobMetadata, JobSettings, JobState};
 
 impl ResumeDb {
+    /// Atomically claim the next queued job (smallest id) by setting its state to Running.
+    /// Returns the claimed job id, or None if no job is queued. Used by the parallel scheduler
+    /// so multiple workers never pick the same job. Stranded Running jobs are reset by
+    /// `recover_running_jobs()` before scheduling.
+    pub async fn claim_next_queued_job(&self) -> Result<Option<JobId>> {
+        let now = unix_timestamp();
+        let mut tx = self.pool.begin().await?;
+        let row = sqlx::query(
+            r#"
+            SELECT id FROM jobs
+            WHERE state = 'queued'
+            ORDER BY id ASC
+            LIMIT 1
+            "#,
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(row) = row else {
+            tx.commit().await?;
+            return Ok(None);
+        };
+        let id: i64 = row.get("id");
+        sqlx::query(
+            r#"
+            UPDATE jobs
+            SET state = 'running',
+                updated_at = ?1
+            WHERE id = ?2
+            "#,
+        )
+        .bind(now)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(Some(id))
+    }
     /// Insert a new queued job with minimal information.
     ///
     /// Metadata such as size, ETag, and segment layout will be filled in

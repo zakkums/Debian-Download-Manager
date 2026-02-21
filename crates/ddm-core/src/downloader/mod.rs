@@ -58,6 +58,7 @@ pub struct DownloadSummary {
 /// If `progress_tx` is `Some`, the current bitmap is sent after each completed segment
 /// (coalesced every N completions) so the caller can persist progress.
 /// If `in_flight_bytes` is `Some`, each segment updates its slot as bytes are received for smoother progress.
+/// If `abort` is set and becomes true during the run, the download stops and returns `Err(JobAborted)`.
 pub fn download_segments(
     url: &str,
     custom_headers: &HashMap<String, String>,
@@ -69,6 +70,7 @@ pub fn download_segments(
     summary_out: &mut DownloadSummary,
     progress_tx: Option<&tokio::sync::mpsc::Sender<Vec<u8>>>,
     in_flight_bytes: Option<Arc<Vec<AtomicU64>>>,
+    abort: Option<Arc<std::sync::atomic::AtomicBool>>,
     curl: CurlOptions,
 ) -> Result<()> {
     let incomplete: Vec<(usize, Segment)> = segments
@@ -102,6 +104,7 @@ pub fn download_segments(
             summary_out,
             progress_tx,
             in_flight_bytes,
+            abort,
             curl,
         )
     } else {
@@ -116,6 +119,7 @@ pub fn download_segments(
             summary_out,
             progress_tx,
             in_flight_bytes,
+            abort,
             curl,
         )
     }

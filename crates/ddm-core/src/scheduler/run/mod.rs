@@ -30,6 +30,7 @@ pub async fn next_queued_job_id(db: &ResumeDb) -> Result<Option<i64>> {
 
 /// Runs the next queued job (smallest id first, FIFO). Returns true if a job was run, false if none queued.
 /// If `progress_tx` is `Some`, progress stats are sent during the download.
+/// If `job_control` is `Some`, the job can be paused via the control socket.
 pub async fn run_next_job(
     db: &ResumeDb,
     force_restart: bool,
@@ -39,6 +40,7 @@ pub async fn run_next_job(
     host_policy: &mut HostPolicy,
     progress_tx: Option<&tokio::sync::mpsc::Sender<ProgressStats>>,
     global_budget: Option<&GlobalConnectionBudget>,
+    job_control: Option<std::sync::Arc<crate::control::JobControl>>,
 ) -> Result<bool> {
     let Some(job_id) = next_queued_job_id(db).await? else {
         return Ok(false);
@@ -53,6 +55,7 @@ pub async fn run_next_job(
         host_policy,
         progress_tx,
         global_budget,
+        job_control,
     )
     .await?;
     Ok(true)

@@ -38,6 +38,7 @@ async fn multi_segment_download_completes_and_file_matches() {
         &mut host_policy,
         None,
         None,
+        None,
     )
     .await
     .expect("run_one_job");
@@ -81,6 +82,7 @@ async fn multi_backend_download_completes_and_file_matches() {
         &cfg,
         download_dir.path(),
         &mut host_policy,
+        None,
         None,
         None,
     )
@@ -133,6 +135,7 @@ async fn head_blocked_falls_back_to_range_probe_and_completes() {
         &mut host_policy,
         None,
         None,
+        None,
     )
     .await
     .expect("run_one_job");
@@ -177,6 +180,7 @@ async fn no_range_server_falls_back_to_single_stream_get() {
         &cfg,
         download_dir.path(),
         &mut host_policy,
+        None,
         None,
         None,
     )

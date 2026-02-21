@@ -1,6 +1,7 @@
 //! CLI for the DDM download manager.
 
 mod commands;
+mod control_socket;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};

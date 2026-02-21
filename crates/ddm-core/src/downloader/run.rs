@@ -10,6 +10,7 @@ use crate::retry::{classify, run_with_retry, ErrorKind, RetryPolicy};
 use crate::segmenter::{Segment, SegmentBitmap};
 use crate::storage::StorageWriter;
 
+use crate::control::JobAborted;
 use super::segment;
 use super::CurlOptions;
 use super::DownloadSummary;
@@ -34,12 +35,14 @@ pub(super) fn run_concurrent(
     summary_out: &mut DownloadSummary,
     progress_tx: Option<&tokio::sync::mpsc::Sender<Vec<u8>>>,
     in_flight_bytes: Option<Arc<Vec<AtomicU64>>>,
+    abort: Option<Arc<AtomicBool>>,
     curl: CurlOptions,
 ) -> Result<()> {
     let count = incomplete.len();
     let work: Arc<Mutex<VecDeque<(usize, Segment)>>> =
         Arc::new(Mutex::new(incomplete.into_iter().collect()));
     let abort_requested = Arc::new(AtomicBool::new(false));
+    let user_abort = abort.unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
     let (tx, rx) = mpsc::channel();
     let num_workers = max_concurrent.min(count);
     let mut handles = Vec::with_capacity(num_workers);
@@ -47,6 +50,7 @@ pub(super) fn run_concurrent(
         let work = Arc::clone(&work);
         let tx = tx.clone();
         let abort = Arc::clone(&abort_requested);
+        let user_abort = Arc::clone(&user_abort);
         let u = url.clone();
         let h = headers.clone();
         let st = storage.clone();
@@ -55,7 +59,7 @@ pub(super) fn run_concurrent(
         let in_flight = in_flight_bytes.as_ref().map(Arc::clone);
         handles.push(std::thread::spawn(move || {
             loop {
-                if abort.load(Ordering::Relaxed) {
+                if abort.load(Ordering::Relaxed) || user_abort.load(Ordering::Relaxed) {
                     break;
                 }
                 let (index, segment) = match work.lock().unwrap().pop_front() {
@@ -79,7 +83,15 @@ pub(super) fn run_concurrent(
     let mut completed_since_send = 0usize;
     let mut to_receive = count;
     while to_receive > 0 {
-        let (index, res) = rx.recv().expect("worker result");
+        let (index, res) = match rx.recv() {
+            Ok(pair) => pair,
+            Err(_) => {
+                first_error = Some(anyhow::anyhow!(
+                    "worker result channel closed (worker may have panicked)"
+                ));
+                break;
+            }
+        };
         to_receive -= 1;
         match res {
             Ok(()) => {
@@ -116,6 +128,12 @@ pub(super) fn run_concurrent(
                 }
             }
         }
+        if user_abort.load(Ordering::Relaxed) {
+            if first_error.is_none() {
+                first_error = Some(anyhow::anyhow!(JobAborted));
+            }
+            break;
+        }
     }
     if completed_since_send > 0 {
         if let Some(progress_tx) = progress_tx {
@@ -123,7 +141,11 @@ pub(super) fn run_concurrent(
         }
     }
     for h in handles {
-        h.join().unwrap_or_else(|e| panic!("worker panicked: {:?}", e));
+        if let Err(e) = h.join() {
+            if first_error.is_none() {
+                first_error = Some(anyhow::anyhow!("worker panicked: {:?}", e));
+            }
+        }
     }
     if let Some(e) = first_error {
         return Err(e);

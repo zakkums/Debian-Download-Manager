@@ -7,22 +7,67 @@ Use this file to see what's done and what's left. When starting a new chat, shar
 ## Status summary
 
 - **Done:** Core engine, resume DB, scheduler, segmented downloader (Easy + threads and optional curl multi backend), safe resume, retry/backoff, durable progress, import-har, bench, HostPolicy persistence, global scheduling, integration tests, Tier 0 + Tier 1 roadmap items, Tier 2 (bandwidth cap + buffer tuning).
-- **In progress:** Tier 3 – real control plane (pause/resume/cancel).
-- **Current step:** **Tier 3** (true pause/resume/cancel control plane).
+- **In progress:** (none).
+- **Current step:** **Tier 4** (packaging, README, completions) or polish.
+- **Urgent:** ~~Parallel scheduler job-claim race~~ **Fixed.** ~~Tier 3 control plane~~ **Done:** control socket + abort token; pause stops in-flight download.
 
 ---
 
-## Current step (begin here): Tier 3 — "Real download manager" control plane
+## Current step (begin here): Tier 4 or polish
 
-### Goals
+### Tier 3 done
 
-- Implement **true pause/resume/cancel** for running jobs (not just DB state changes).
-- Add a minimum viable **local IPC/control channel** so `ddm pause/resume/remove` can affect in-flight work.
+- **True pause:** `ddm run` starts a control socket; `ddm pause <id>` sends a signal; the running job stops within ~1s, progress is saved, state set to Paused. Resume continues without losing completed segments (re-run `ddm run`).
+- **Cancel:** Same mechanism (control socket "cancel &lt;id&gt;" or remove the job and use pause to stop first).
 
-### Acceptance criteria
+### Next (Tier 4)
 
-- Pause stops network activity for a running job within ~1s.
-- Resume continues without losing completed segments.
+- README, LICENSE, rust-toolchain, completions/manpage.
+
+---
+
+## Outstanding issues (ROI / severity order)
+
+These are the biggest remaining issues; some may overlap with items already marked done and should be verified or refined.
+
+### A) ~~Critical race bug in parallel scheduling~~ **FIXED**
+
+~~Duplicate job starts when `--jobs > 1`.~~ **Fixed:** Added `ResumeDb::claim_next_queued_job()` (transaction: SELECT smallest queued id + UPDATE state to Running). `run_jobs_parallel` now uses `db.claim_next_queued_job().await?` instead of `next_queued_job_id`. Test `claim_next_queued_job_atomic` added.
+
+### B) ~~download_dir not persisted per job~~ **Verified done**
+
+`JobSettings.download_dir` is set at `ddm add` (default: current dir). Scheduler and `remove --delete-files` use the job's stored directory. Remove now prefers job's `download_dir` when deleting files.
+
+### C) ~~CLI help/semantics mismatch~~ **Addressed**
+
+Pause help states it only affects scheduling; **Tier 3** adds a control socket so `ddm pause <id>` while `ddm run` is active signals the running job to stop; progress is saved and state set to Paused. Remove help matches behavior (DB + optional `--delete-files`).
+
+### D) ~~File collisions and overwrites~~ **Verified done**
+
+Collision strategy (`unique_filename_among`, `list_final_filenames_in_dir`) and `run --overwrite` are implemented; default is no overwrite.
+
+### E) ~~Hard-fail on non-Range servers~~ **Verified done**
+
+Tier 1: `probe_best_effort`, single-stream GET fallback, and HEAD-blocked probe are implemented; integration tests cover no-range and HEAD-blocked.
+
+### F) ~~Panics in downloader worker control plane~~ **FIXED**
+
+~~`downloader/run.rs` used `rx.recv().expect(...)` and `join().unwrap_or_else(|e| panic!(...))`.~~ **Fixed:** `run_concurrent` uses `rx.recv()` → `Err` yields a structured error; `join()` failures are collected and returned as `anyhow::Error`. `run_unbounded` collects `join()` results as `Result<..., Box<dyn Any+Send>>` and returns an error on panic instead of panicking.
+
+### ~~Docs consistency issue~~ **Fixed**
+
+`docs_http_client_choice.md` updated to describe both Easy+threads (default) and optional `curl::multi` backend.
+
+---
+
+## Recommended fix sequence (minimal, high-impact)
+
+1. ~~**Fix parallel scheduler job-claim race**~~ **Done** (A).
+2. ~~**Persist download_dir per job**~~ **Done** (B); remove uses job dir for `--delete-files`.
+3. ~~**Collision/overwrite policy**~~ **Done** (D).
+4. ~~**Stop panicking in worker orchestration**~~ **Done** (F).
+5. ~~**Fallback path for non-range / HEAD-blocked**~~ **Done** (E).
+6. ~~**Update docs + CLI**~~ **Done** (C + docs). **Tier 3** control plane done: control socket + abort token; pause stops in-flight download.
 
 ---
 
@@ -35,30 +80,6 @@ Use this file to see what's done and what's left. When starting a new chat, shar
 ### Tier 4 — Packaging and usability
 
 - README.md, LICENSE, rust-toolchain pinning, completions/manpage.
-
-### High-ROI issues and fixes (historical + backlog)
-
-- **A) Parallel scheduler race (duplicate job starts)**  
-  - **Problem**: `run_jobs_parallel` repeatedly calls `next_queued_job_id()` and spawns tasks, but jobs are not atomically claimed; multiple workers can start the same queued job concurrently, risking duplicate writes and corrupt finalization.  
-  - **Fix direction**: add an atomic "claim next job" DB operation (e.g. a transaction that selects the next queued id and immediately sets state to `running`), reusing the existing `recover_running_jobs()` model. **Status**: **TODO**.
-- **B) `download_dir` not persisted per job**  
-  - **Problem**: resumable jobs depended on the caller’s current working directory instead of the job’s own directory.  
-  - **Fix direction**: store `download_dir` in `JobSettings` at `ddm add` time and always resolve paths from that directory. **Status**: **DONE** (see "Tier 0: download_dir per job").
-- **C) CLI help vs behavior mismatch (pause/remove)**  
-  - **Problem**: CLI text implied true runtime control, but commands only affected DB state and future scheduling.  
-  - **Fix direction**: clarify help text until a real control plane exists. **Status**: **DONE** (Tier 0: CLI text match reality; Tier 3 will add real control).
-- **D) File collisions and overwrites**  
-  - **Problem**: naive `rename` could overwrite existing files or collide when two jobs derive the same filename.  
-  - **Fix direction**: use `unique_filename_among()` and require explicit `--overwrite`. **Status**: **DONE** (Tier 0: collision strategy + `--overwrite`).
-- **E) Non-Range / HEAD-blocked servers hard-fail**  
-  - **Problem**: earlier versions bailed when `Accept-Ranges` or `Content-Length` were missing, limiting compatibility.  
-  - **Fix direction**: implement a single-stream GET fallback with HEAD/GET probing. **Status**: **DONE** (Tier 1: HEAD-blocked + non-range fallback).
-- **F) Panics in downloader worker orchestration**  
-  - **Problem**: `expect("worker result")` and panicking on worker `join` propagate as process panics instead of structured errors.  
-  - **Fix direction**: convert these into regular errors and let the scheduler mark the job as failed. **Status**: **TODO**.
-- **Docs: curl backend description drift**  
-  - **Problem**: `docs_http_client_choice.md` and related docs can lag behind the actual Easy vs multi backend behavior.  
-  - **Fix direction**: keep docs explicit about the active backend(s) and configuration options, updating whenever the default backend or multi support changes. **Status**: **PARTIAL** – see "Docs vs code (done)" plus new multi backend work.
 
 ---
 
@@ -119,18 +140,23 @@ Older detail is preserved in:
 
 ## In progress
 
-- **Tier 3: control plane design** – settle on an in-process control socket (minimum viable) and job control API so `ddm pause/resume/remove` can signal the running scheduler.
+- (none)
 
 ---
 
 ## Not started (next in ROI order)
 
-- Then Tier 3 → Tier 4 per roadmap above.
+- **Tier 4:** README, LICENSE, rust-toolchain, completions/manpage.
 
 ---
 
 ## Done (this session)
 
+- [x] **Tier 3: control plane** – `JobControl` (register/unregister/request_abort); abort token threaded through download_segments (easy + multi + unbounded); `execute_download_phase` on `JobAborted` sets state to Paused and returns Ok. Control socket: `ddm run` starts listener on `~/.local/state/ddm/control.sock`; `ddm pause <id>` sends "pause &lt;id&gt;" to socket; running job stops within ~1s, progress saved.
+- [x] **Remove: use job download_dir for --delete-files** – When deleting files, use job's stored `settings.download_dir` when available.
+- [x] **docs_http_client_choice.md** – Updated for Easy+threads and optional multi backend.
+- [x] **Parallel scheduler job-claim race (A)** – `ResumeDb::claim_next_queued_job()` in a transaction; `run_jobs_parallel` uses it so only one task gets each job. Test `claim_next_queued_job_atomic`.
+- [x] **Downloader worker panics → Result (F)** – `run_concurrent`: `rx.recv()` and `join()` failures become structured errors. `run_unbounded`: join results as `Result`; panic reported as error.
 - [x] **Tier 0: download_dir per job** – `JobSettings.download_dir` (stored in settings_json); CLI `add` accepts `--download-dir` (default: current dir); run path uses job's download_dir when set so resume works from any working directory.
 - [x] **Tier 0: Collision strategy** – `url_model::unique_filename_among()`; `ResumeDb::list_final_filenames_in_dir()`; run path resolves unique final name when needs_metadata so two identical URLs get e.g. `file.iso` and `file (1).iso`.
 - [x] **Tier 0: --overwrite** – CLI `run --overwrite`; run fails if final file exists unless `--overwrite`.
