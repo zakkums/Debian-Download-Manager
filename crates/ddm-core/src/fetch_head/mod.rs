@@ -51,6 +51,7 @@ pub fn probe(url: &str, custom_headers: &HashMap<String, String>) -> Result<Head
         .context("invalid URL")?;
     easy.nobody(true)?; // HEAD request
     easy.follow_location(true)?;
+    easy.max_redirections(10)?;
     easy.connect_timeout(Duration::from_secs(15))?;
     easy.timeout(Duration::from_secs(30))?;
 
@@ -98,6 +99,7 @@ pub fn probe_range0(url: &str, custom_headers: &HashMap<String, String>) -> Resu
     let mut easy = curl::easy::Easy::new();
     easy.url(url).context("invalid URL")?;
     easy.follow_location(true)?;
+    easy.max_redirections(10)?;
     easy.connect_timeout(Duration::from_secs(15))?;
     easy.timeout(Duration::from_secs(30))?;
     easy.range("0-0")?;

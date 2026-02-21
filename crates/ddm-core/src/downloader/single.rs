@@ -27,6 +27,7 @@ pub fn download_single(
     let mut easy = curl::easy::Easy::new();
     easy.url(url).context("invalid URL")?;
     easy.follow_location(true)?;
+    easy.max_redirections(10)?;
     if let Some(speed) = curl.max_recv_speed {
         easy.max_recv_speed(speed).map_err(|e| anyhow::anyhow!("curl: {}", e))?;
     }

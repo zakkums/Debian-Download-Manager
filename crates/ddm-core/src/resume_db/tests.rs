@@ -1,7 +1,7 @@
 //! Tests for resume_db (use in-memory DB helper from db).
 
 use crate::resume_db::db::open_memory;
-use crate::resume_db::{JobMetadata, JobState, JobSettings};
+use crate::resume_db::{JobMetadata, ResumeDb, JobState, JobSettings};
 
 #[tokio::test]
 async fn job_state_roundtrip_via_db() {
@@ -160,4 +160,21 @@ async fn get_job_and_update_metadata_roundtrip() {
         Some("Wed, 21 Oct 2015 07:28:00 GMT")
     );
     assert_eq!(job3.segment_count, 4);
+}
+
+/// open_at with a path containing a space must work (URI percent-encoding).
+#[tokio::test]
+async fn open_at_path_with_space() {
+    let dir = tempfile::tempdir().unwrap();
+    let sub = dir.path().join("sub dir");
+    tokio::fs::create_dir_all(&sub).await.unwrap();
+    let db_path = sub.join("jobs.db");
+    let db = ResumeDb::open_at(&db_path).await.unwrap();
+    let id = db
+        .add_job("https://example.com/f", &JobSettings::default())
+        .await
+        .unwrap();
+    let jobs = db.list_jobs().await.unwrap();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].id, id);
 }

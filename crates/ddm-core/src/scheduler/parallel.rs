@@ -84,9 +84,11 @@ pub async fn run_jobs_parallel(
         res.map_err(|e| anyhow::anyhow!("job task join: {}", e))??;
     }
 
-    *host_policy = Arc::try_unwrap(shared_policy)
-        .map_err(|_| anyhow::anyhow!("shared policy still in use"))
-        .map(|m| m.into_inner())?;
+    // Restore updated policy; if a clone is still held (e.g. by a task), clone out instead of failing.
+    *host_policy = match Arc::try_unwrap(shared_policy) {
+        Ok(m) => m.into_inner(),
+        Err(arc) => arc.lock().await.clone(),
+    };
 
     Ok(run_count)
 }

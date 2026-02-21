@@ -8,6 +8,23 @@ use sqlx::{Pool, Sqlite};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Percent-encode a path for use in a sqlite:// URI so spaces and special chars don't break parsing.
+fn path_to_sqlite_uri(path: &Path) -> String {
+    let s = path.to_string_lossy();
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '%' => out.push_str("%25"),
+            ' ' => out.push_str("%20"),
+            '#' => out.push_str("%23"),
+            '?' => out.push_str("%3F"),
+            '&' => out.push_str("%26"),
+            c => out.push(c),
+        }
+    }
+    format!("sqlite://{}", out)
+}
+
 /// Handle to the SQLite-backed job database.
 ///
 /// The database file is stored under the XDG state directory:
@@ -21,13 +38,13 @@ impl ResumeDb {
     /// Open (or create) the default job database and run migrations.
     pub async fn open_default() -> Result<Self> {
         let xdg_dirs = xdg::BaseDirectories::with_prefix("ddm")?;
-        let state_dir = xdg_dirs.get_state_home();
+        let state_dir = xdg_dirs.get_state_home().join("ddm");
         let db_path = state_dir.join("jobs.db");
 
         // Ensure parent directory exists.
         tokio::fs::create_dir_all(&state_dir).await?;
 
-        let uri = format!("sqlite://{}", db_path.display());
+        let uri = path_to_sqlite_uri(&db_path);
         let pool = SqlitePoolOptions::new()
             .max_connections(8)
             .connect(&uri)
@@ -45,7 +62,7 @@ impl ResumeDb {
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        let uri = format!("sqlite://{}?mode=rwc", path.display());
+        let uri = path_to_sqlite_uri(path) + "?mode=rwc";
         let pool = SqlitePoolOptions::new()
             .max_connections(8)
             .connect(&uri)

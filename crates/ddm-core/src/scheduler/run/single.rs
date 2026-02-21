@@ -152,8 +152,10 @@ pub async fn run_one_job(
         c.unregister(job_id);
     }
 
-    if run_result.is_err() {
-        let _ = db.set_state(job_id, JobState::Error).await;
+    if let Err(ref e) = &run_result {
+        if e.downcast_ref::<crate::control::JobAborted>().is_none() {
+            let _ = db.set_state(job_id, JobState::Error).await;
+        }
     }
     run_result
 }

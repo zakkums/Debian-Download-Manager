@@ -9,7 +9,7 @@ impl HostPolicy {
     /// Default path for host policy file: `~/.local/state/ddm/host_policy.json`.
     pub fn default_path() -> Result<std::path::PathBuf> {
         let xdg_dirs = xdg::BaseDirectories::with_prefix("ddm")?;
-        Ok(xdg_dirs.get_state_home().join("host_policy.json"))
+        Ok(xdg_dirs.get_state_home().join("ddm").join("host_policy.json"))
     }
 
     /// Save current policy to the given path (creates parent dir if needed).

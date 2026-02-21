@@ -48,6 +48,7 @@ pub(super) fn download_one_segment(
     let mut easy = curl::easy::Easy::new();
     easy.url(url).map_err(SegmentError::Curl)?;
     easy.follow_location(true).map_err(SegmentError::Curl)?;
+    easy.max_redirections(10).map_err(SegmentError::Curl)?;
     if let Some(speed) = curl.max_recv_speed {
         easy.max_recv_speed(speed).map_err(SegmentError::Curl)?;
     }

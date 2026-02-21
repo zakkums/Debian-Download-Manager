@@ -22,7 +22,7 @@ pub use snapshot::PersistedHostPolicy;
 /// The cache is intentionally small and process-local. It is created by the
 /// CLI `run` loop and passed into the scheduler so that multiple jobs within a
 /// single invocation can share observations about each host.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HostPolicy {
     pub(super) entries: HashMap<HostKey, HostEntry>,
     pub(super) min_segments: usize,

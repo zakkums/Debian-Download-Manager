@@ -8,7 +8,7 @@ Use this file to see what's done and what's left. When starting a new chat, shar
 
 - **Done:** Core engine, resume DB, scheduler, segmented downloader (Easy + threads and optional curl multi backend), safe resume, retry/backoff, durable progress, import-har, bench, HostPolicy persistence, global scheduling, integration tests, Tier 0 + Tier 1 roadmap items, Tier 2 (bandwidth cap + buffer tuning).
 - **In progress:** (none).
-- **Current step:** **Tier 4** — done (README, LICENSE, rust-toolchain, completions, manpage). Optional polish next.
+- **Current step:** Error-list and problem-assessment fixes (critical/high first); then CI (rustfmt/clippy), then remaining gaps.
 - **Urgent:** ~~Parallel scheduler job-claim race~~ **Fixed.** ~~Tier 3 control plane~~ **Done:** control socket + abort token; pause stops in-flight download.
 
 ---
@@ -61,6 +61,61 @@ Tier 1: `probe_best_effort`, single-stream GET fallback, and HEAD-blocked probe 
 ### ~~Docs consistency issue~~ **Fixed**
 
 `docs_http_client_choice.md` updated to describe both Easy+threads (default) and optional `curl::multi` backend.
+
+---
+
+## Error list (bugs / failure modes)
+
+### Critical (can panic, corrupt data, or mis-state job status)
+
+| Issue | Failure mode | Status |
+|-------|--------------|--------|
+| **Range request not strictly validated (206 vs 200)** | Server ignores Range and returns 200 OK → segment writer may write wrong offsets → corrupted file. | **Verified:** 206+Content-Range checked in write callback (return 0 before writing) and post-perform (segment.rs, multi/handler). |
+| **Abort/pause can accidentally become "Error"** | If abort propagates as Err anywhere downstream, scheduler's generic Err ⇒ state=Error path wins. | **Fixed:** single/shared only set state=Error when error is not JobAborted. |
+| **Arc::try_unwrap dependency in parallel scheduler** | Any lingering clone (task leak or logic change) → try_unwrap fails → panic or forced error path. | **Fixed:** on try_unwrap failure, clone policy out and restore; HostPolicy now Clone. |
+| **SQLite URL constructed as string from filesystem path** | Spaces/unicode/special chars in path → sqlx URL parse fails → DB won't open; resume breaks. | **Fixed:** path_to_sqlite_uri() percent-encodes path; test open_at_path_with_space. |
+
+### High (likely to break in real-world environments)
+
+| Issue | Failure mode | Status |
+|-------|--------------|--------|
+| **XDG state directory placement** | Writes to ~/.local/state/ instead of ~/.local/state/ddm/ → permission/pollution. | **Fixed:** get_state_home().join("ddm") in db.rs, control.rs, logging.rs, host_policy/persist.rs. |
+| **No hard timeouts / stall detection** | Hanging connection → job never completes; scheduler threads tied up. | **Mitigated:** connect/timeout and low_speed_limit/low_speed_time already set in segment, single, multi, fetch_head. |
+| **Redirect policy not bounded** | Redirect loops or cross-host → infinite loops, wrong host policy, security. | **Fixed:** max_redirections(10) in fetch_head (probe + probe_range0), segment, single, multi/refill. |
+
+### Medium (correctness drift / UX failure)
+
+| Issue | Failure mode | Status |
+|-------|--------------|--------|
+| **Documentation vs behavior** | Config says "not enforced" while progress claims enforced. | **Fixed:** config.rs comments for max_bytes_per_sec and segment_buffer_bytes updated to "Enforced/Applied". |
+| **Logging init uses expect()** | Log directory unwritable → CLI hard-crashes. | **Fixed:** init_logging() returns Result; main falls back to init_logging_stderr(); FileOrStderr writer avoids panic on clone failure. |
+| **Range/size probing assumptions** | HEAD blocked, no Content-Length, chunked → segmentation plan wrong unless fallback airtight. | Fallback exists; add tests. |
+
+---
+
+## Problem assessment (design/quality gaps)
+
+### Reliability gaps
+
+- **Missing integration tests** for: range supported (206), range ignored (200), no Content-Length, HEAD blocked, slow/stalling server, disk-full mid-write, resume after partial.
+- **No explicit data-integrity story**: optional checksum verification so corrupted downloads don’t look “successful”.
+- **No circuit breaker / host backoff enforcement**: per-host concurrent limits, escalating cooldown after failures, jittered backoff.
+
+### Maintainability gaps
+
+- **Formatting discipline**: enforce rustfmt and clippy in CI. **Done:** GitHub Actions runs `cargo fmt --check` and `cargo clippy -W clippy::all` (can tighten to -D warnings after fixing remaining lints).
+- **Panic-style error handling**: replace expect() with structured errors. **Done:** logging init; remaining expect() can be addressed incrementally.
+- **Docs and code alignment**: keep ARCHITECTURE.md, PROGRESS.md, config.rs aligned.
+
+### Security hardening gaps
+
+- **URL validation and redirect constraints**: max redirect depth, optional same-host only, scheme restrictions (http/https), deny file://.
+- **TLS configuration**: document defaults; consider minimum TLS version and cert validation controls.
+
+### Performance/efficiency gaps
+
+- **Header cloning per job/segment**: use shared/Arc for auth headers.
+- **SQLite tuning**: WAL mode, batching so segment progress ticks don’t sync-write every time.
 
 ---
 
@@ -144,13 +199,13 @@ Older detail is preserved in:
 
 ## In progress
 
-- (none)
+- (none; critical/high fixes done this session)
 
 ---
 
 ## Not started (next in ROI order)
 
-- Optional polish (e.g. Pause help text: "stops running download via control socket").
+- Hard timeouts / stall detection; redirect policy (depth, same-host); logging init graceful degrade; CI rustfmt/clippy; optional checksum verification; circuit breaker / host backoff.
 
 ---
 
@@ -173,12 +228,18 @@ Older detail is preserved in:
 - [x] **Execute mod &lt;200 lines** – Split `scheduler/execute/mod.rs` (216 lines) into `execute/finish.rs` (post-download: record outcome, sync, metadata, finalize).
 - [x] **Run shared/single &lt;200 lines** – Added `scheduler/run/common.rs` with `resolve_filenames` and `paths_and_overwrite_check`; `shared.rs` and `single.rs` now &lt;200 lines.
 - [x] **Tier 4** – README.md, LICENSE-MIT, LICENSE-APACHE, rust-toolchain.toml, `ddm completions <shell>`, `ddm manpage`.
+- [x] **Error list (critical/high)** – Abort⇒Error: only set state=Error when error is not JobAborted (single/shared). SQLite path: path_to_sqlite_uri() percent-encodes; test open_at_path_with_space. try_unwrap: on failure clone policy out (HostPolicy::Clone). XDG state: get_state_home().join("ddm") in db, control, logging, persist.
+- [x] **Logging init graceful degrade** – init_logging() returns Result; main uses init_logging_stderr() on failure; FileOrStderr writer for clone failure.
+- [x] **CI** – .github/workflows/ci.yml: rustfmt --check, clippy -W clippy::all, test with libcurl.
+- [x] **Redirect policy** – max_redirections(10) in fetch_head (probe, probe_range0), segment, single, multi/refill.
+- [x] **Docs alignment** – config.rs: max_bytes_per_sec and segment_buffer_bytes comments say enforced/applied.
 
 ---
 
 ## Done (tests for new code)
 
 - [x] **Tests for multi backend** – Unit tests for multi handler (header clear on HTTP/, write rejects non-206, write accepts 206 and writes at offset); integration test `multi_backend_download_completes_and_file_matches` runs full download with `download_backend = "multi"`.
+- [x] **open_at_path_with_space** – Resume DB test for path with space (URI encoding).
 
 ---
 

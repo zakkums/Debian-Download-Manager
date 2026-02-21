@@ -47,10 +47,10 @@ pub struct DdmConfig {
     /// Optional retry policy; if missing, built-in defaults are used.
     #[serde(default)]
     pub retry: Option<RetryConfig>,
-    /// Optional bandwidth cap in bytes per second (None = no cap). Not yet enforced.
+    /// Optional bandwidth cap in bytes per second (None = no cap). Enforced per handle when set.
     #[serde(default)]
     pub max_bytes_per_sec: Option<u64>,
-    /// Optional segment read/write buffer size in bytes (None = library default). Reserved.
+    /// Optional segment read/write buffer size in bytes (None = library default). Applied to curl when set.
     #[serde(default)]
     pub segment_buffer_bytes: Option<usize>,
     /// Download backend: "easy" (default) or "multi". Easy = one Easy handle per segment in threads; multi = curl multi.

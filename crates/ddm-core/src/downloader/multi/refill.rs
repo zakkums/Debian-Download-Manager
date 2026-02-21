@@ -50,6 +50,8 @@ pub(super) fn add_easy_to_multi(
     easy.url(url).map_err(|e| anyhow::anyhow!("curl url: {}", e))?;
     easy.follow_location(true)
         .map_err(|e| anyhow::anyhow!("curl: {}", e))?;
+    easy.max_redirections(10)
+        .map_err(|e| anyhow::anyhow!("curl: {}", e))?;
     if let Some(speed) = curl.max_recv_speed {
         easy.max_recv_speed(speed)
             .map_err(|e| anyhow::anyhow!("curl: {}", e))?;
