@@ -5,12 +5,12 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::config::DdmConfig;
+use crate::control::JobControl;
 use crate::fetch_head;
+use crate::host_policy::HostPolicy;
 use crate::resume_db::{JobMetadata, JobState, ResumeDb};
 use crate::safe_resume;
 use crate::segmenter;
-use crate::host_policy::HostPolicy;
-use crate::control::JobControl;
 
 use super::super::budget::GlobalConnectionBudget;
 use super::super::choose;
@@ -42,11 +42,7 @@ pub async fn run_one_job(
         .ok_or_else(|| anyhow::anyhow!("job {} not found", job_id))?;
 
     let url = job.url.clone();
-    let headers: HashMap<String, String> = job
-        .settings
-        .custom_headers
-        .clone()
-        .unwrap_or_default();
+    let headers: HashMap<String, String> = job.settings.custom_headers.clone().unwrap_or_default();
 
     let head = tokio::task::spawn_blocking({
         let url = url.clone();
@@ -70,7 +66,13 @@ pub async fn run_one_job(
     }
 
     let (final_name, temp_name_str, needs_metadata) = super::common::resolve_filenames(
-        db, job_id, &job, &head, force_restart, validation.is_err(), download_dir,
+        db,
+        job_id,
+        &job,
+        &head,
+        force_restart,
+        validation.is_err(),
+        download_dir,
     )
     .await?;
 
@@ -96,8 +98,7 @@ pub async fn run_one_job(
     let total_size = head
         .content_length
         .ok_or_else(|| anyhow::anyhow!("server did not send Content-Length"))?;
-    let segment_count =
-        choose::choose_segment_count(total_size, cfg, &url, host_policy);
+    let segment_count = choose::choose_segment_count(total_size, cfg, &url, host_policy);
 
     if needs_metadata {
         let bitmap = segmenter::SegmentBitmap::new(segment_count);
@@ -117,11 +118,14 @@ pub async fn run_one_job(
     let total_size_u = job.total_size.unwrap() as u64;
     let segment_count_u = job.segment_count as usize;
     let segments = segmenter::plan_segments(total_size_u, segment_count_u);
-    let mut bitmap =
-        segmenter::SegmentBitmap::from_bytes(&job.completed_bitmap, segment_count_u);
+    let mut bitmap = segmenter::SegmentBitmap::from_bytes(&job.completed_bitmap, segment_count_u);
 
     let (temp_path, final_path) = super::common::paths_and_overwrite_check(
-        &job, &final_name, &temp_name_str, download_dir, overwrite,
+        &job,
+        &final_name,
+        &temp_name_str,
+        download_dir,
+        overwrite,
     )?;
 
     db.set_state(job_id, JobState::Running).await?;

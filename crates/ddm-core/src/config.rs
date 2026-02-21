@@ -116,7 +116,10 @@ mod tests {
         let toml = toml::to_string_pretty(&cfg).unwrap();
         let parsed: DdmConfig = toml::from_str(&toml).unwrap();
         assert_eq!(parsed.max_total_connections, cfg.max_total_connections);
-        assert_eq!(parsed.max_connections_per_host, cfg.max_connections_per_host);
+        assert_eq!(
+            parsed.max_connections_per_host,
+            cfg.max_connections_per_host
+        );
         assert_eq!(parsed.min_segments, cfg.min_segments);
         assert_eq!(parsed.max_segments, cfg.max_segments);
     }
@@ -184,4 +187,3 @@ mod tests {
         assert_eq!(retry.max_delay_secs, 15);
     }
 }
-

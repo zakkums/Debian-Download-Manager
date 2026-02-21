@@ -123,4 +123,3 @@ pub(crate) async fn open_memory() -> Result<ResumeDb> {
     db.migrate().await?;
     Ok(db)
 }
-

@@ -81,7 +81,10 @@ mod tests {
         f.flush().unwrap();
         let spec = resolve_har(f.path(), true).unwrap();
         assert_eq!(spec.url, "https://cdn.example.com/file.zip");
-        assert_eq!(spec.headers.get("Cookie").map(|s| s.as_str()), Some("session=abc123"));
+        assert_eq!(
+            spec.headers.get("Cookie").map(|s| s.as_str()),
+            Some("session=abc123")
+        );
     }
 
     #[test]

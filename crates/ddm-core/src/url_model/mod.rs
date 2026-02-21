@@ -122,24 +122,24 @@ mod tests {
             derive_filename("https://example.com/", None),
             "download.bin"
         );
+        assert_eq!(derive_filename("https://example.com", None), "download.bin");
+    }
+
+    #[test]
+    fn derive_filename_reserved_names_fallback() {
         assert_eq!(
-            derive_filename("https://example.com", None),
+            derive_filename("https://example.com/.", None),
+            "download.bin"
+        );
+        assert_eq!(
+            derive_filename("https://example.com/..", None),
             "download.bin"
         );
     }
 
     #[test]
-    fn derive_filename_reserved_names_fallback() {
-        assert_eq!(derive_filename("https://example.com/.", None), "download.bin");
-        assert_eq!(derive_filename("https://example.com/..", None), "download.bin");
-    }
-
-    #[test]
     fn unique_filename_among_no_collision() {
-        assert_eq!(
-            unique_filename_among("file.iso", &[]),
-            "file.iso"
-        );
+        assert_eq!(unique_filename_among("file.iso", &[]), "file.iso");
         assert_eq!(
             unique_filename_among("file.iso", &["other.zip".to_string()]),
             "file.iso"
@@ -153,7 +153,10 @@ mod tests {
             "file (1).iso"
         );
         assert_eq!(
-            unique_filename_among("file.iso", &["file.iso".to_string(), "file (1).iso".to_string()]),
+            unique_filename_among(
+                "file.iso",
+                &["file.iso".to_string(), "file (1).iso".to_string()]
+            ),
             "file (2).iso"
         );
     }

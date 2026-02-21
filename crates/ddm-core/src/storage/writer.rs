@@ -2,10 +2,10 @@
 
 use anyhow::{Context, Result};
 use std::fs::File;
-use std::path::Path;
-use std::sync::Arc;
 #[cfg(unix)]
 use std::os::unix::fs::FileExt;
+use std::path::Path;
+use std::sync::Arc;
 
 /// Writer for a temp download file. Safe to clone and use from multiple tasks;
 /// each `write_at` is independent (pwrite-style).
@@ -31,7 +31,9 @@ impl StorageWriter {
             .read(true)
             .write(true)
             .open(temp_path)
-            .with_context(|| format!("failed to open existing temp file: {}", temp_path.display()))?;
+            .with_context(|| {
+                format!("failed to open existing temp file: {}", temp_path.display())
+            })?;
         Ok(StorageWriter {
             file: Arc::new(file),
             temp_path: temp_path.to_path_buf(),
@@ -78,8 +80,13 @@ impl StorageWriter {
         let temp_path = self.temp_path.clone();
         drop(self.file);
 
-        std::fs::rename(&temp_path, final_path)
-            .with_context(|| format!("failed to rename {} to {}", temp_path.display(), final_path.display()))?;
+        std::fs::rename(&temp_path, final_path).with_context(|| {
+            format!(
+                "failed to rename {} to {}",
+                temp_path.display(),
+                final_path.display()
+            )
+        })?;
         Ok(())
     }
 }

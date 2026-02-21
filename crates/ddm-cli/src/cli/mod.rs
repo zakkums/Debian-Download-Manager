@@ -136,14 +136,22 @@ impl CliCommand {
                 let dir = download_dir.or_else(|| std::env::current_dir().ok());
                 run_add(&db, &url, dir.as_deref()).await?
             }
-            CliCommand::Run { force_restart, jobs, overwrite } => {
+            CliCommand::Run {
+                force_restart,
+                jobs,
+                overwrite,
+            } => {
                 let download_dir = std::env::current_dir()?;
                 run_scheduler(&db, &cfg, &download_dir, force_restart, jobs, overwrite).await?;
             }
             CliCommand::Status => run_status(&db).await?,
             CliCommand::Pause { id } => run_pause(&db, id).await?,
             CliCommand::Resume { id } => run_resume(&db, id).await?,
-            CliCommand::Remove { id, delete_files, download_dir } => {
+            CliCommand::Remove {
+                id,
+                delete_files,
+                download_dir,
+            } => {
                 let dir = if delete_files {
                     download_dir.or_else(|| std::env::current_dir().ok())
                 } else {
@@ -151,7 +159,10 @@ impl CliCommand {
                 };
                 run_remove(&db, id, delete_files, dir.as_deref()).await?
             }
-            CliCommand::ImportHar { path, allow_cookies } => {
+            CliCommand::ImportHar {
+                path,
+                allow_cookies,
+            } => {
                 run_import_har(&db, Path::new(&path), allow_cookies).await?;
             }
             CliCommand::Bench { url } => run_bench(&url).await?,

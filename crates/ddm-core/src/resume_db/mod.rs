@@ -12,4 +12,3 @@ mod tests;
 
 pub use db::ResumeDb;
 pub use types::*;
-

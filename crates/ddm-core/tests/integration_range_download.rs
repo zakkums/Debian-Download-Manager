@@ -45,10 +45,7 @@ async fn multi_segment_download_completes_and_file_matches() {
 
     let job = db.get_job(job_id).await.unwrap().expect("job exists");
     assert_eq!(job.state, JobState::Completed, "job should be completed");
-    let final_name = job
-        .final_filename
-        .as_deref()
-        .unwrap_or("download.bin");
+    let final_name = job.final_filename.as_deref().unwrap_or("download.bin");
     let final_path = download_dir.path().join(final_name);
     assert!(final_path.exists(), "final file should exist");
     let content = std::fs::read(&final_path).unwrap();
@@ -90,11 +87,12 @@ async fn multi_backend_download_completes_and_file_matches() {
     .expect("run_one_job with multi backend");
 
     let job = db.get_job(job_id).await.unwrap().expect("job exists");
-    assert_eq!(job.state, JobState::Completed, "multi backend should complete");
-    let final_name = job
-        .final_filename
-        .as_deref()
-        .unwrap_or("download.bin");
+    assert_eq!(
+        job.state,
+        JobState::Completed,
+        "multi backend should complete"
+    );
+    let final_name = job.final_filename.as_deref().unwrap_or("download.bin");
     let final_path = download_dir.path().join(final_name);
     assert!(final_path.exists(), "final file should exist");
     let content = std::fs::read(&final_path).unwrap();

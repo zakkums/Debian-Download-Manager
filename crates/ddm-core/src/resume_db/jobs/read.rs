@@ -4,7 +4,7 @@ use anyhow::Result;
 use sqlx::Row;
 
 use super::super::db::ResumeDb;
-use super::super::types::{JobDetails, JobId, JobState, JobSettings, JobSummary};
+use super::super::types::{JobDetails, JobId, JobSettings, JobState, JobSummary};
 
 impl ResumeDb {
     /// List all jobs in the database, newest first.
@@ -47,11 +47,9 @@ impl ResumeDb {
         download_dir: Option<&str>,
         exclude_job_id: Option<JobId>,
     ) -> Result<Vec<String>> {
-        let rows = sqlx::query(
-            r#"SELECT id, final_filename, settings_json FROM jobs"#,
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let rows = sqlx::query(r#"SELECT id, final_filename, settings_json FROM jobs"#)
+            .fetch_all(&self.pool)
+            .await?;
 
         let mut out = Vec::new();
         for row in rows {

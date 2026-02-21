@@ -18,8 +18,7 @@ pub async fn resolve_filenames(
     validation_failed: bool,
     download_dir: &Path,
 ) -> Result<(String, String, bool)> {
-    let candidate_name =
-        url_model::derive_filename(&job.url, head.content_disposition.as_deref());
+    let candidate_name = url_model::derive_filename(&job.url, head.content_disposition.as_deref());
     let effective_dir_str = job
         .settings
         .download_dir
@@ -56,16 +55,8 @@ pub fn paths_and_overwrite_check(
         .as_deref()
         .map(std::path::Path::new)
         .unwrap_or(download_dir);
-    let temp_path = effective_dir.join(
-        job.temp_filename
-            .as_deref()
-            .unwrap_or(temp_name_str),
-    );
-    let final_path = effective_dir.join(
-        job.final_filename
-            .as_deref()
-            .unwrap_or(final_name),
-    );
+    let temp_path = effective_dir.join(job.temp_filename.as_deref().unwrap_or(temp_name_str));
+    let final_path = effective_dir.join(job.final_filename.as_deref().unwrap_or(final_name));
     if final_path.exists() && !overwrite {
         anyhow::bail!(
             "final file already exists: {} (use --overwrite to replace)",

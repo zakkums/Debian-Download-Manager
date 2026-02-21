@@ -18,7 +18,10 @@ pub fn parse_content_disposition_filename(header_value: &str) -> Option<String> 
             let v = v.trim();
 
             if name == "filename*" {
-                if let Some(rest) = v.strip_prefix("utf-8''").or_else(|| v.strip_prefix("UTF-8''")) {
+                if let Some(rest) = v
+                    .strip_prefix("utf-8''")
+                    .or_else(|| v.strip_prefix("UTF-8''"))
+                {
                     if let Ok(decoded) = percent_decode(rest) {
                         let decoded = decode_quoted_filename(&decoded);
                         if !decoded.is_empty() {

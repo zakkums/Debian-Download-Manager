@@ -27,7 +27,9 @@ pub async fn run_remove(
                 match tokio::fs::remove_file(&path).await {
                     Ok(()) => tracing::debug!(path = %path.display(), "deleted file"),
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(e) => tracing::warn!(path = %path.display(), "could not delete file: {}", e),
+                    Err(e) => {
+                        tracing::warn!(path = %path.display(), "could not delete file: {}", e)
+                    }
                 }
             }
         }

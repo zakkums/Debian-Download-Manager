@@ -64,11 +64,17 @@ mod tests {
 
     #[test]
     fn collapses_underscores() {
-        assert_eq!(sanitize_filename_for_linux("file___name.txt"), "file_name.txt");
+        assert_eq!(
+            sanitize_filename_for_linux("file___name.txt"),
+            "file_name.txt"
+        );
     }
 
     #[test]
     fn control_chars() {
-        assert_eq!(sanitize_filename_for_linux("file\x00name.txt"), "file_name.txt");
+        assert_eq!(
+            sanitize_filename_for_linux("file\x00name.txt"),
+            "file_name.txt"
+        );
     }
 }

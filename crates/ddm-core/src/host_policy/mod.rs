@@ -107,7 +107,7 @@ mod tests {
             .record_job_outcome(
                 url,
                 4,
-                10_000_000, // 10 MiB
+                10_000_000,             // 10 MiB
                 Duration::from_secs(5), // 2 MiB/s > 1 MiB/s threshold
                 0,
                 0,
@@ -146,4 +146,3 @@ mod tests {
         assert!(n >= 2);
     }
 }
-

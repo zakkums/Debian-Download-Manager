@@ -12,9 +12,7 @@ const THROUGHPUT_GOOD_BPS: f64 = 1_000_000.0; // 1 MiB/s
 
 /// Default adaptive segment count for a new host (start at 4 per spec).
 pub(super) fn default_adaptive_limit(policy: &HostPolicy) -> usize {
-    (4_usize)
-        .max(policy.min_segments)
-        .min(policy.max_segments)
+    (4_usize).max(policy.min_segments).min(policy.max_segments)
 }
 
 /// Compute the recommended maximum number of segments for a host key.
@@ -22,10 +20,7 @@ pub(super) fn default_adaptive_limit(policy: &HostPolicy) -> usize {
 /// Conservative heuristic: start from global max, halve for each group of three
 /// throttling events, never below min_segments.
 pub(super) fn recommended_max_segments(policy: &HostPolicy, key: &HostKey) -> usize {
-    let base = policy
-        .max_segments
-        .max(policy.min_segments)
-        .max(1);
+    let base = policy.max_segments.max(policy.min_segments).max(1);
     let Some(entry) = policy.entries.get(key) else {
         return base;
     };
@@ -70,8 +65,7 @@ pub(super) fn record_job_outcome(
     }
 
     if throttle_events > 0 || error_events > 0 {
-        entry.adaptive_segment_limit =
-            (entry.adaptive_segment_limit / 2).max(min_seg).min(max_seg);
+        entry.adaptive_segment_limit = (entry.adaptive_segment_limit / 2).max(min_seg).min(max_seg);
     } else if bps >= THROUGHPUT_GOOD_BPS {
         let next = match entry.adaptive_segment_limit {
             n if n < 8 => 8,

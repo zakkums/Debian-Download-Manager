@@ -59,10 +59,7 @@ impl curl::easy::Handler for SegmentHandler {
         if self.range_ok.is_none() {
             let status = parse_http_status(&self.response_headers);
             let content_ok = parse_content_range(&self.response_headers)
-                .map(|(s, e)| {
-                    s == self.segment.start
-                        && e == self.segment.end.saturating_sub(1)
-                })
+                .map(|(s, e)| s == self.segment.start && e == self.segment.end.saturating_sub(1))
                 .unwrap_or(false);
             self.range_ok = Some(status == Some(206) && content_ok);
         }
@@ -105,7 +102,11 @@ mod tests {
         h.header(b"Location: http://other/\r\n");
         assert_eq!(h.response_headers.len(), 2);
         h.header(b"HTTP/1.1 206 Partial Content\r\n");
-        assert_eq!(h.response_headers.len(), 1, "headers cleared on new HTTP/ line");
+        assert_eq!(
+            h.response_headers.len(),
+            1,
+            "headers cleared on new HTTP/ line"
+        );
         assert!(h.response_headers[0].contains("206"));
     }
 

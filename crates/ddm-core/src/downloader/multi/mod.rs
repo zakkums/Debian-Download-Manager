@@ -16,8 +16,8 @@ use crate::retry::RetryPolicy;
 use crate::segmenter::{Segment, SegmentBitmap};
 use crate::storage::StorageWriter;
 
-use super::DownloadSummary;
 use super::CurlOptions;
+use super::DownloadSummary;
 
 /// Runs segment downloads via the curl multi backend (Easy2 + Multi handle).
 /// When retry_policy is Some, retryable segment failures are retried with backoff.
@@ -100,6 +100,9 @@ mod tests {
             None,
             CurlOptions::default(),
         );
-        assert!(result.is_ok(), "multi returns Ok when no segments to download");
+        assert!(
+            result.is_ok(),
+            "multi returns Ok when no segments to download"
+        );
     }
 }

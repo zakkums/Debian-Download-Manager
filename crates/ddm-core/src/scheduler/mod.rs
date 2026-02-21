@@ -14,4 +14,4 @@ mod run;
 pub use budget::GlobalConnectionBudget;
 pub use parallel::run_jobs_parallel;
 pub use progress::ProgressStats;
-pub use run::{run_one_job, run_next_job};
+pub use run::{run_next_job, run_one_job};

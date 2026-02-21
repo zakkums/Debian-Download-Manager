@@ -5,10 +5,10 @@
 //! full body (which would corrupt the temp file when written at segment offset).
 //! Validation is done in the write callback before writing any byte (pre-write).
 
+use super::CurlOptions;
 use crate::retry::SegmentError;
 use crate::segmenter::Segment;
 use crate::storage::StorageWriter;
-use super::CurlOptions;
 use std::collections::HashMap;
 use std::str;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -86,7 +86,10 @@ pub(super) fn download_one_segment(
                         vec.clear();
                         vec.push(line.to_string());
                     } else {
-                        let _ = response_headers_header.lock().unwrap().push(line.to_string());
+                        let _ = response_headers_header
+                            .lock()
+                            .unwrap()
+                            .push(line.to_string());
                     }
                 }
                 true
@@ -109,14 +112,19 @@ pub(super) fn download_one_segment(
                 }
                 let off = bytes_written_in_cb.fetch_add(data.len() as u64, Ordering::Relaxed);
                 if let Some((ref v, idx)) = in_flight {
-                    v.get(idx).map(|a| a.store(bytes_written_in_cb.load(Ordering::Relaxed), Ordering::Relaxed));
+                    v.get(idx).map(|a| {
+                        a.store(
+                            bytes_written_in_cb.load(Ordering::Relaxed),
+                            Ordering::Relaxed,
+                        )
+                    });
                 }
                 match storage.write_at(segment_start + off, data) {
                     Ok(()) => Ok(data.len()),
                     Err(e) => {
-                        let io_err = e
-                            .downcast::<std::io::Error>()
-                            .unwrap_or_else(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
+                        let io_err = e.downcast::<std::io::Error>().unwrap_or_else(|e| {
+                            std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                        });
                         let _ = storage_error_cb.lock().unwrap().replace(io_err);
                         Ok(0)
                     }

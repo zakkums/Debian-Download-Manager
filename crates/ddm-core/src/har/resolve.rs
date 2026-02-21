@@ -18,8 +18,8 @@ use super::parse::{HarEntry, HarHeader, HarLog};
 /// If `include_cookies` is true, the `Cookie` header from the chosen request
 /// is included (for cookie-based CDN auth).
 pub fn resolve_har(path: &Path, include_cookies: bool) -> Result<ResolvedJobSpec> {
-    let bytes = std::fs::read(path)
-        .with_context(|| format!("read HAR file: {}", path.display()))?;
+    let bytes =
+        std::fs::read(path).with_context(|| format!("read HAR file: {}", path.display()))?;
     let har: HarLog = serde_json::from_slice(&bytes)
         .with_context(|| format!("parse HAR JSON: {}", path.display()))?;
 
@@ -28,29 +28,27 @@ pub fn resolve_har(path: &Path, include_cookies: bool) -> Result<ResolvedJobSpec
         anyhow::bail!("HAR file has no entries");
     }
 
-    let best_index = select_download_entry(&entries).unwrap_or_else(|| {
-        let mut final_url = entries[0].request.url.clone();
-        for entry in &entries {
-            let status = entry.response.status;
-            if (301..=302).contains(&status) || status == 307 || status == 308 {
-                if let Some(url) = entry
-                    .response
-                    .redirect_url
-                    .clone()
-                    .or_else(|| get_header(&entry.response.headers, "Location").map(String::from))
-                {
-                    final_url = url.trim().to_string();
+    let best_index =
+        select_download_entry(&entries).unwrap_or_else(|| {
+            let mut final_url = entries[0].request.url.clone();
+            for entry in &entries {
+                let status = entry.response.status;
+                if (301..=302).contains(&status) || status == 307 || status == 308 {
+                    if let Some(url) = entry.response.redirect_url.clone().or_else(|| {
+                        get_header(&entry.response.headers, "Location").map(String::from)
+                    }) {
+                        final_url = url.trim().to_string();
+                    }
                 }
             }
-        }
-        entries
-            .iter()
-            .enumerate()
-            .rev()
-            .find(|(_, e)| e.request.url == final_url)
-            .map(|(i, _)| i)
-            .unwrap_or(0)
-    });
+            entries
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, e)| e.request.url == final_url)
+                .map(|(i, _)| i)
+                .unwrap_or(0)
+        });
 
     let entry = &entries[best_index];
     let final_url = entry.request.url.clone();
@@ -83,11 +81,7 @@ fn download_entry_score(entry: &HarEntry, index: usize) -> (bool, bool, usize) {
     let has_accept_ranges = get_header(&entry.response.headers, "Accept-Ranges")
         .map(|v| v.eq_ignore_ascii_case("bytes"))
         .unwrap_or(false);
-    (
-        entry.response.status == 206,
-        has_accept_ranges,
-        index,
-    )
+    (entry.response.status == 206, has_accept_ranges, index)
 }
 
 /// Best entry that looks like a download, or None if none match.

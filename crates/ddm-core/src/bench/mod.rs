@@ -79,7 +79,11 @@ pub fn run_bench(
             &segments,
             &storage_writer,
             &mut bitmap,
-            Some(segment_count.min(cfg.max_connections_per_host).min(cfg.max_total_connections)),
+            Some(
+                segment_count
+                    .min(cfg.max_connections_per_host)
+                    .min(cfg.max_total_connections),
+            ),
             Some(&retry_policy),
             &mut summary,
             None,
@@ -129,11 +133,17 @@ pub fn recommend_segment_count(results: &[BenchResult]) -> Option<usize> {
     let best_no_errors = results
         .iter()
         .filter(|r| r.error_events == 0)
-        .max_by(|a, b| a.throughput_mib_s.partial_cmp(&b.throughput_mib_s).unwrap_or(std::cmp::Ordering::Equal));
+        .max_by(|a, b| {
+            a.throughput_mib_s
+                .partial_cmp(&b.throughput_mib_s)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
     let best = best_no_errors.or_else(|| {
-        results
-            .iter()
-            .max_by(|a, b| a.throughput_mib_s.partial_cmp(&b.throughput_mib_s).unwrap_or(std::cmp::Ordering::Equal))
+        results.iter().max_by(|a, b| {
+            a.throughput_mib_s
+                .partial_cmp(&b.throughput_mib_s)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
     })?;
     Some(best.segment_count)
 }

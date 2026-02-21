@@ -9,8 +9,8 @@ use anyhow::Result;
 use std::path::Path;
 
 use crate::config::DdmConfig;
-use crate::resume_db::{JobState, ResumeDb};
 use crate::host_policy::HostPolicy;
+use crate::resume_db::{JobState, ResumeDb};
 
 use super::budget::GlobalConnectionBudget;
 use super::progress::ProgressStats;

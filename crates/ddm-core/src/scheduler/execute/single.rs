@@ -38,7 +38,9 @@ pub(crate) async fn execute_single_download_phase(
         let url = url.to_string();
         let headers = headers.clone();
         let storage = storage_writer.clone();
-        move || -> Result<u64> { downloader::download_single(&url, &headers, &storage, expected_len, curl) }
+        move || -> Result<u64> {
+            downloader::download_single(&url, &headers, &storage, expected_len, curl)
+        }
     })
     .await
     .context("download task join")??;
@@ -46,8 +48,11 @@ pub(crate) async fn execute_single_download_phase(
     storage_writer.sync()?;
     storage_writer.finalize(final_path)?;
     db.set_state(job_id, JobState::Completed).await?;
-    tracing::info!("job {} completed (single): {}", job_id, final_path.display());
+    tracing::info!(
+        "job {} completed (single): {}",
+        job_id,
+        final_path.display()
+    );
 
     Ok(bytes_written)
 }
-

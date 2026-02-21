@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::config::DdmConfig;
-use crate::fetch_head::HeadResult;
 use crate::downloader::CurlOptions;
+use crate::fetch_head::HeadResult;
 use crate::resume_db::{JobDetails, JobMetadata, JobState, ResumeDb};
 use crate::scheduler::execute;
 
@@ -85,4 +85,3 @@ pub(super) async fn run_single_stream(
 
     Ok(())
 }
-

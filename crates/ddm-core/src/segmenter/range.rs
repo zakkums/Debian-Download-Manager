@@ -44,10 +44,7 @@ pub fn plan_segments(total_size: u64, segment_count: usize) -> Vec<Segment> {
     for i in 0..segment_count {
         let len = base + if i < remainder { 1 } else { 0 };
         let end = (offset + len).min(total_size);
-        out.push(Segment {
-            start: offset,
-            end,
-        });
+        out.push(Segment { start: offset, end });
         offset = end;
     }
 
@@ -114,4 +111,3 @@ mod tests {
         assert_eq!(s.range_header_value(), "bytes=42-42");
     }
 }
-

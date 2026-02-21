@@ -25,9 +25,9 @@ pub async fn run_scheduler(
         tracing::info!("recovered {} job(s) from previous run", recovered);
     }
     let global_budget = Arc::new(GlobalConnectionBudget::new(cfg.max_total_connections));
-    let mut host_policy = match HostPolicy::default_path().and_then(|p| {
-        HostPolicy::load_from_path(&p, cfg.min_segments, cfg.max_segments)
-    }) {
+    let mut host_policy = match HostPolicy::default_path()
+        .and_then(|p| HostPolicy::load_from_path(&p, cfg.min_segments, cfg.max_segments))
+    {
         Ok(Some(policy)) => {
             tracing::debug!("loaded host policy from state file");
             policy

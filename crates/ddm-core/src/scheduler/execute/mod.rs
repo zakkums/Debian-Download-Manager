@@ -15,11 +15,11 @@ use std::time::{Duration, Instant};
 use crate::config::{DdmConfig, DownloadBackend};
 use crate::control::JobAborted;
 use crate::downloader::DownloadSummary;
+use crate::host_policy::HostPolicy;
 use crate::resume_db::{JobState, ResumeDb};
 use crate::retry::RetryPolicy;
 use crate::segmenter;
 use crate::storage;
-use crate::host_policy::HostPolicy;
 
 use self::guard::BudgetGuard;
 use self::progress_worker::run_progress_persistence_loop;
@@ -53,9 +53,12 @@ pub(super) async fn execute_download_phase(
     abort: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<()> {
     if needs_metadata && temp_path.exists() {
-        tokio::fs::remove_file(temp_path)
-            .await
-            .with_context(|| format!("remove temp file for force-restart: {}", temp_path.display()))?;
+        tokio::fs::remove_file(temp_path).await.with_context(|| {
+            format!(
+                "remove temp file for force-restart: {}",
+                temp_path.display()
+            )
+        })?;
         tracing::debug!(path = %temp_path.display(), "removed existing .part for clean restart");
     }
 
@@ -80,11 +83,15 @@ pub(super) async fn execute_download_phase(
         budget: b,
         reserved: actual_concurrent,
     });
-    let retry_policy = cfg.retry.as_ref().map(|r| RetryPolicy {
-        max_attempts: r.max_attempts,
-        base_delay: Duration::from_secs_f64(r.base_delay_secs),
-        max_delay: Duration::from_secs(r.max_delay_secs),
-    }).unwrap_or_else(RetryPolicy::default);
+    let retry_policy = cfg
+        .retry
+        .as_ref()
+        .map(|r| RetryPolicy {
+            max_attempts: r.max_attempts,
+            base_delay: Duration::from_secs_f64(r.base_delay_secs),
+            max_delay: Duration::from_secs(r.max_delay_secs),
+        })
+        .unwrap_or_else(RetryPolicy::default);
 
     let curl_opts = crate::downloader::CurlOptions::per_handle(
         cfg.max_bytes_per_sec,
@@ -100,7 +107,9 @@ pub(super) async fn execute_download_phase(
     let download_start = Instant::now();
 
     let in_flight_bytes: Arc<Vec<std::sync::atomic::AtomicU64>> = Arc::new(
-        (0..segment_count_u).map(|_| std::sync::atomic::AtomicU64::new(0)).collect(),
+        (0..segment_count_u)
+            .map(|_| std::sync::atomic::AtomicU64::new(0))
+            .collect(),
     );
     let (bitmap_tx, progress_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(8);
     let progress_handle = tokio::spawn(run_progress_persistence_loop(
@@ -128,25 +137,27 @@ pub(super) async fn execute_download_phase(
         let in_flight = Arc::clone(&in_flight_bytes);
         let abort_clone = abort.clone();
         let curl = curl_opts;
-        tokio::task::spawn_blocking(move || -> Result<(segmenter::SegmentBitmap, DownloadSummary)> {
-            let mut summary = DownloadSummary::default();
-            run_download_blocking(
-                &url,
-                &headers,
-                &segments,
-                &storage,
-                &mut bitmap_copy,
-                max_concurrent,
-                &policy,
-                &mut summary,
-                Some(&tx),
-                Some(in_flight),
-                abort_clone,
-                use_multi,
-                curl,
-            )?;
-            Ok((bitmap_copy, summary))
-        })
+        tokio::task::spawn_blocking(
+            move || -> Result<(segmenter::SegmentBitmap, DownloadSummary)> {
+                let mut summary = DownloadSummary::default();
+                run_download_blocking(
+                    &url,
+                    &headers,
+                    &segments,
+                    &storage,
+                    &mut bitmap_copy,
+                    max_concurrent,
+                    &policy,
+                    &mut summary,
+                    Some(&tx),
+                    Some(in_flight),
+                    abort_clone,
+                    use_multi,
+                    curl,
+                )?;
+                Ok((bitmap_copy, summary))
+            },
+        )
         .await
         .context("download task join")?
     };

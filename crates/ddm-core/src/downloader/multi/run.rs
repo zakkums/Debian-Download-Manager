@@ -12,11 +12,11 @@ use crate::retry::{classify, ErrorKind, RetryDecision, RetryPolicy};
 use crate::segmenter::{Segment, SegmentBitmap};
 use crate::storage::StorageWriter;
 
+use super::super::CurlOptions;
+use super::super::DownloadSummary;
 use super::handler::SegmentHandler;
 use super::refill;
 use super::result;
-use super::super::DownloadSummary;
-use super::super::CurlOptions;
 
 const COALESCE_PROGRESS_EVERY: usize = 2;
 
@@ -45,7 +45,12 @@ pub(super) fn run_multi(
     let multi = curl::multi::Multi::new();
     let mut pending: VecDeque<(usize, Segment)> = incomplete.into_iter().collect();
     let mut retry_after: Vec<(Instant, usize, Segment, u32)> = Vec::new();
-    let mut active: Vec<(curl::multi::Easy2Handle<SegmentHandler>, usize, Segment, u32)> = Vec::new();
+    let mut active: Vec<(
+        curl::multi::Easy2Handle<SegmentHandler>,
+        usize,
+        Segment,
+        u32,
+    )> = Vec::new();
     let mut first_error: Option<anyhow::Error> = None;
     let mut completed_since_send = 0usize;
 
@@ -67,13 +72,19 @@ pub(super) fn run_multi(
     }
 
     while !active.is_empty() {
-        if abort.as_ref().map(|a| a.load(Ordering::Relaxed)).unwrap_or(false) {
+        if abort
+            .as_ref()
+            .map(|a| a.load(Ordering::Relaxed))
+            .unwrap_or(false)
+        {
             if first_error.is_none() {
                 first_error = Some(anyhow::anyhow!(JobAborted));
             }
             break;
         }
-        let running = multi.perform().map_err(|e| anyhow::anyhow!("curl multi perform: {}", e))?;
+        let running = multi
+            .perform()
+            .map_err(|e| anyhow::anyhow!("curl multi perform: {}", e))?;
         let mut completed_indices: Vec<usize> = Vec::new();
         multi.messages(|msg| {
             for (i, (ref handle, ..)) in active.iter().enumerate() {
@@ -86,7 +97,9 @@ pub(super) fn run_multi(
         completed_indices.sort_by(|a, b| b.cmp(a));
         for &i in &completed_indices {
             let (handle, seg_index, segment, attempt) = active.remove(i);
-            let mut easy = multi.remove2(handle).map_err(|e| anyhow::anyhow!("curl multi remove: {}", e))?;
+            let mut easy = multi
+                .remove2(handle)
+                .map_err(|e| anyhow::anyhow!("curl multi remove: {}", e))?;
             let code = easy.response_code().unwrap_or(0);
             let handler = easy.get_mut();
             let res = result::segment_result_from_easy(code, &segment, handler);
@@ -110,7 +123,9 @@ pub(super) fn run_multi(
                     }
                     let will_retry = retry_policy.as_ref().and_then(|policy| {
                         match policy.decide(attempt, kind) {
-                            RetryDecision::RetryAfter(d) => Some((Instant::now() + d, seg_index, segment, attempt + 1)),
+                            RetryDecision::RetryAfter(d) => {
+                                Some((Instant::now() + d, seg_index, segment, attempt + 1))
+                            }
                             RetryDecision::NoRetry => None,
                         }
                     });
@@ -118,7 +133,9 @@ pub(super) fn run_multi(
                         retry_after.push(entry);
                     } else {
                         if first_error.is_none() {
-                            first_error = Some(anyhow::anyhow!("{}", e).context(format!("segment {}", seg_index)));
+                            first_error = Some(
+                                anyhow::anyhow!("{}", e).context(format!("segment {}", seg_index)),
+                            );
                         }
                     }
                 }
@@ -141,7 +158,8 @@ pub(super) fn run_multi(
         }
         if running > 0 {
             let wait_ms = refill::next_retry_wait_ms(&retry_after).min(100);
-            multi.wait(&mut [], Duration::from_millis(wait_ms))
+            multi
+                .wait(&mut [], Duration::from_millis(wait_ms))
                 .map_err(|e| anyhow::anyhow!("curl multi wait: {}", e))?;
         }
     }

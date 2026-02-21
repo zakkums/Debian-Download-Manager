@@ -132,4 +132,3 @@ mod tests {
         assert!(!b.is_completed(8));
     }
 }
-

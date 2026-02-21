@@ -13,10 +13,10 @@ mod single;
 pub mod multi;
 pub use single::download_single;
 
-use anyhow::Result;
 use crate::retry::{RetryPolicy, SegmentError};
 use crate::segmenter::{Segment, SegmentBitmap};
 use crate::storage::StorageWriter;
+use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
@@ -35,9 +35,14 @@ pub struct CurlOptions {
 
 impl CurlOptions {
     /// Derive per-handle options from a global cap and concurrency.
-    pub fn per_handle(global_max_bytes_per_sec: Option<u64>, concurrency: usize, buffer_size: Option<usize>) -> Self {
+    pub fn per_handle(
+        global_max_bytes_per_sec: Option<u64>,
+        concurrency: usize,
+        buffer_size: Option<usize>,
+    ) -> Self {
         let concurrency_u = (concurrency.max(1)) as u64;
-        let max_recv_speed = global_max_bytes_per_sec.map(|bps| (bps + concurrency_u - 1) / concurrency_u);
+        let max_recv_speed =
+            global_max_bytes_per_sec.map(|bps| (bps + concurrency_u - 1) / concurrency_u);
         Self {
             max_recv_speed,
             buffer_size,

@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use crate::downloader::DownloadSummary;
 use crate::downloader;
 use crate::downloader::CurlOptions;
+use crate::downloader::DownloadSummary;
 use crate::retry::RetryPolicy;
 use crate::segmenter;
 use crate::storage;

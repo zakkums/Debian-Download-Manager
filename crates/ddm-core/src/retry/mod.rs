@@ -13,4 +13,3 @@ pub use classify::{classify, classify_curl_error, classify_http_status};
 pub use error::SegmentError;
 pub use policy::{ErrorKind, RetryDecision, RetryPolicy};
 pub use run::run_with_retry;
-

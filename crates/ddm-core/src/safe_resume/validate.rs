@@ -49,7 +49,10 @@ impl fmt::Display for ValidationError {
                         write!(f, ", size")?;
                     }
                 }
-                write!(f, "; use --force-restart to discard progress and re-download")?;
+                write!(
+                    f,
+                    "; use --force-restart to discard progress and re-download"
+                )?;
                 Ok(())
             }
         }
@@ -64,9 +67,7 @@ impl std::error::Error for ValidationError {}
 /// can proceed with initial probe and segment planning. Otherwise compares ETag,
 /// Last-Modified, and size; returns Err(ValidationError) if any differ.
 pub fn validate_for_resume(job: &JobDetails, head: &HeadResult) -> Result<(), ValidationError> {
-    let has_stored = job.total_size.is_some()
-        || job.etag.is_some()
-        || job.last_modified.is_some();
+    let has_stored = job.total_size.is_some() || job.etag.is_some() || job.last_modified.is_some();
 
     if !has_stored {
         return Ok(());
@@ -107,7 +108,7 @@ pub fn validate_for_resume(job: &JobDetails, head: &HeadResult) -> Result<(), Va
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::resume_db::{JobState, JobSettings};
+    use crate::resume_db::{JobSettings, JobState};
 
     fn job_details(
         total_size: Option<i64>,
@@ -148,25 +149,51 @@ mod tests {
     #[test]
     fn no_stored_metadata_ok() {
         let job = job_details(None, None, None);
-        let head = head_result(Some(1000), Some("e1"), Some("Wed, 21 Oct 2015 07:28:00 GMT"));
+        let head = head_result(
+            Some(1000),
+            Some("e1"),
+            Some("Wed, 21 Oct 2015 07:28:00 GMT"),
+        );
         assert!(validate_for_resume(&job, &head).is_ok());
     }
 
     #[test]
     fn same_etag_and_size_ok() {
-        let job = job_details(Some(1000), Some("e1"), Some("Wed, 21 Oct 2015 07:28:00 GMT"));
-        let head = head_result(Some(1000), Some("e1"), Some("Wed, 21 Oct 2015 07:28:00 GMT"));
+        let job = job_details(
+            Some(1000),
+            Some("e1"),
+            Some("Wed, 21 Oct 2015 07:28:00 GMT"),
+        );
+        let head = head_result(
+            Some(1000),
+            Some("e1"),
+            Some("Wed, 21 Oct 2015 07:28:00 GMT"),
+        );
         assert!(validate_for_resume(&job, &head).is_ok());
     }
 
     #[test]
     fn etag_changed_err() {
-        let job = job_details(Some(1000), Some("e1"), Some("Wed, 21 Oct 2015 07:28:00 GMT"));
-        let head = head_result(Some(1000), Some("e2"), Some("Wed, 21 Oct 2015 07:28:00 GMT"));
+        let job = job_details(
+            Some(1000),
+            Some("e1"),
+            Some("Wed, 21 Oct 2015 07:28:00 GMT"),
+        );
+        let head = head_result(
+            Some(1000),
+            Some("e2"),
+            Some("Wed, 21 Oct 2015 07:28:00 GMT"),
+        );
         let r = validate_for_resume(&job, &head);
         assert!(r.is_err());
         let e = r.unwrap_err();
-        assert!(matches!(e.kind, ValidationErrorKind::RemoteChanged { etag_changed: true, .. }));
+        assert!(matches!(
+            e.kind,
+            ValidationErrorKind::RemoteChanged {
+                etag_changed: true,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -176,7 +203,13 @@ mod tests {
         let r = validate_for_resume(&job, &head);
         assert!(r.is_err());
         let e = r.unwrap_err();
-        assert!(matches!(e.kind, ValidationErrorKind::RemoteChanged { size_changed: true, .. }));
+        assert!(matches!(
+            e.kind,
+            ValidationErrorKind::RemoteChanged {
+                size_changed: true,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -186,6 +219,12 @@ mod tests {
         let r = validate_for_resume(&job, &head);
         assert!(r.is_err());
         let e = r.unwrap_err();
-        assert!(matches!(e.kind, ValidationErrorKind::RemoteChanged { last_modified_changed: true, .. }));
+        assert!(matches!(
+            e.kind,
+            ValidationErrorKind::RemoteChanged {
+                last_modified_changed: true,
+                ..
+            }
+        ));
     }
 }

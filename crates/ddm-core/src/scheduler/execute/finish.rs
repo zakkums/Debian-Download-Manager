@@ -5,10 +5,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::downloader::DownloadSummary;
+use crate::host_policy::HostPolicy;
 use crate::resume_db::{JobMetadata, JobState, ResumeDb};
 use crate::segmenter;
 use crate::storage;
-use crate::host_policy::HostPolicy;
 
 /// After download completes (or is aborted with pause): record host policy outcome,
 /// sync storage, update DB metadata, and finalize file + set state if all segments done.

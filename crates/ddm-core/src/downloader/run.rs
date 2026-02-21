@@ -10,11 +10,11 @@ use crate::retry::{classify, run_with_retry, ErrorKind, RetryPolicy};
 use crate::segmenter::{Segment, SegmentBitmap};
 use crate::storage::StorageWriter;
 
-use crate::control::JobAborted;
 use super::segment;
 use super::CurlOptions;
 use super::DownloadSummary;
 use super::SegmentResult;
+use crate::control::JobAborted;
 
 mod unbounded;
 pub(super) use unbounded::run_unbounded;
@@ -57,24 +57,31 @@ pub(super) fn run_concurrent(
         let policy = retry_policy;
         let curl_opts = curl;
         let in_flight = in_flight_bytes.as_ref().map(Arc::clone);
-        handles.push(std::thread::spawn(move || {
-            loop {
-                if abort.load(Ordering::Relaxed) || user_abort.load(Ordering::Relaxed) {
-                    break;
-                }
-                let (index, segment) = match work.lock().unwrap().pop_front() {
-                    Some(p) => p,
-                    None => break,
-                };
-                let in_flight_seg = in_flight.as_ref().map(|v| (Arc::clone(v), index));
-                let res: SegmentResult = match policy.as_ref() {
-                    Some(p) => run_with_retry(p, || {
-                        segment::download_one_segment(&u, &h, &segment, &st, in_flight_seg.clone(), curl_opts)
-                    }),
-                    None => segment::download_one_segment(&u, &h, &segment, &st, in_flight_seg, curl_opts),
-                };
-                let _ = tx.send((index, res));
+        handles.push(std::thread::spawn(move || loop {
+            if abort.load(Ordering::Relaxed) || user_abort.load(Ordering::Relaxed) {
+                break;
             }
+            let (index, segment) = match work.lock().unwrap().pop_front() {
+                Some(p) => p,
+                None => break,
+            };
+            let in_flight_seg = in_flight.as_ref().map(|v| (Arc::clone(v), index));
+            let res: SegmentResult = match policy.as_ref() {
+                Some(p) => run_with_retry(p, || {
+                    segment::download_one_segment(
+                        &u,
+                        &h,
+                        &segment,
+                        &st,
+                        in_flight_seg.clone(),
+                        curl_opts,
+                    )
+                }),
+                None => {
+                    segment::download_one_segment(&u, &h, &segment, &st, in_flight_seg, curl_opts)
+                }
+            };
+            let _ = tx.send((index, res));
         }));
     }
     drop(tx);
@@ -124,7 +131,8 @@ pub(super) fn run_concurrent(
                     to_receive = to_receive.saturating_sub(drained);
                 }
                 if first_error.is_none() {
-                    first_error = Some(anyhow::anyhow!("{}", e).context(format!("segment {}", index)));
+                    first_error =
+                        Some(anyhow::anyhow!("{}", e).context(format!("segment {}", index)));
                 }
             }
         }

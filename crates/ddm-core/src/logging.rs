@@ -83,4 +83,3 @@ pub fn init_logging_stderr() {
         .with_ansi(false)
         .init();
 }
-

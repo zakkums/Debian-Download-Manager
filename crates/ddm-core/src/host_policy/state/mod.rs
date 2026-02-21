@@ -12,7 +12,7 @@ use crate::fetch_head::HeadResult;
 use super::entry::{HostEntry, RangeSupport};
 use super::HostKey;
 use adaptive::{
-    adaptive_segment_count, default_adaptive_limit, record_job_outcome, recommended_max_segments,
+    adaptive_segment_count, default_adaptive_limit, recommended_max_segments, record_job_outcome,
 };
 
 pub use snapshot::PersistedHostPolicy;

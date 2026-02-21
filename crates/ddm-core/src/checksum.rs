@@ -14,12 +14,13 @@ const BUF_SIZE: usize = 64 * 1024;
 /// Compute SHA-256 of a file and return the digest as lowercase hex.
 /// Reads in chunks to keep memory use bounded; suitable for large files.
 pub fn sha256_path(path: &Path) -> Result<String> {
-    let mut f = File::open(path)
-        .with_context(|| format!("open {}", path.display()))?;
+    let mut f = File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mut hasher = Sha256::new();
     let mut buf = [0u8; BUF_SIZE];
     loop {
-        let n = f.read(&mut buf).with_context(|| format!("read {}", path.display()))?;
+        let n = f
+            .read(&mut buf)
+            .with_context(|| format!("read {}", path.display()))?;
         if n == 0 {
             break;
         }

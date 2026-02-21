@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::control::JobAborted;
-use crate::downloader::{CurlOptions, DownloadSummary, SegmentResult};
 use crate::downloader::segment;
+use crate::downloader::{CurlOptions, DownloadSummary, SegmentResult};
 use crate::retry::{classify, run_with_retry, ErrorKind, RetryPolicy};
 use crate::segmenter::{Segment, SegmentBitmap};
 use crate::storage::StorageWriter;
@@ -25,7 +25,11 @@ pub fn run_unbounded(
     abort: Option<Arc<std::sync::atomic::AtomicBool>>,
     curl: CurlOptions,
 ) -> Result<()> {
-    if abort.as_ref().map(|a| a.load(Ordering::Relaxed)).unwrap_or(false) {
+    if abort
+        .as_ref()
+        .map(|a| a.load(Ordering::Relaxed))
+        .unwrap_or(false)
+    {
         return Err(anyhow::anyhow!(JobAborted));
     }
     type JoinErr = Box<dyn std::any::Any + Send>;
@@ -38,13 +42,18 @@ pub fn run_unbounded(
             let policy = retry_policy.clone();
             let curl_opts = curl;
             let in_flight = in_flight_bytes.as_ref().map(|v| (Arc::clone(v), index));
-            std::thread::spawn(move || {
-                match policy.as_ref() {
-                    Some(p) => run_with_retry(p, || {
-                        segment::download_one_segment(&u, &h, &segment, &st, in_flight.clone(), curl_opts)
-                    }),
-                    None => segment::download_one_segment(&u, &h, &segment, &st, in_flight, curl_opts),
-                }
+            std::thread::spawn(move || match policy.as_ref() {
+                Some(p) => run_with_retry(p, || {
+                    segment::download_one_segment(
+                        &u,
+                        &h,
+                        &segment,
+                        &st,
+                        in_flight.clone(),
+                        curl_opts,
+                    )
+                }),
+                None => segment::download_one_segment(&u, &h, &segment, &st, in_flight, curl_opts),
             })
             .join()
             .map(|res| (index, res))
@@ -82,7 +91,8 @@ pub fn run_unbounded(
                     summary_out.error_events += 1;
                 }
                 if first_error.is_none() {
-                    first_error = Some(anyhow::anyhow!("{}", e).context(format!("segment {}", index)));
+                    first_error =
+                        Some(anyhow::anyhow!("{}", e).context(format!("segment {}", index)));
                 }
             }
         }
@@ -97,4 +107,3 @@ pub fn run_unbounded(
     }
     Ok(())
 }
-

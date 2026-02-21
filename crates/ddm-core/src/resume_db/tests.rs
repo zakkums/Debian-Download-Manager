@@ -1,7 +1,7 @@
 //! Tests for resume_db (use in-memory DB helper from db).
 
 use crate::resume_db::db::open_memory;
-use crate::resume_db::{JobMetadata, ResumeDb, JobState, JobSettings};
+use crate::resume_db::{JobMetadata, JobSettings, JobState, ResumeDb};
 
 #[tokio::test]
 async fn job_state_roundtrip_via_db() {
@@ -103,11 +103,29 @@ async fn claim_next_queued_job_atomic() {
 
     let claimed = db.claim_next_queued_job().await.unwrap();
     assert_eq!(claimed, Some(id1));
-    assert_eq!(db.list_jobs().await.unwrap().iter().find(|j| j.id == id1).unwrap().state, JobState::Running);
+    assert_eq!(
+        db.list_jobs()
+            .await
+            .unwrap()
+            .iter()
+            .find(|j| j.id == id1)
+            .unwrap()
+            .state,
+        JobState::Running
+    );
 
     let claimed2 = db.claim_next_queued_job().await.unwrap();
     assert_eq!(claimed2, Some(id2));
-    assert_eq!(db.list_jobs().await.unwrap().iter().find(|j| j.id == id2).unwrap().state, JobState::Running);
+    assert_eq!(
+        db.list_jobs()
+            .await
+            .unwrap()
+            .iter()
+            .find(|j| j.id == id2)
+            .unwrap()
+            .state,
+        JobState::Running
+    );
 
     let claimed3 = db.claim_next_queued_job().await.unwrap();
     assert_eq!(claimed3, None);

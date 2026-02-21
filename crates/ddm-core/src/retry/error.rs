@@ -26,10 +26,18 @@ impl fmt::Display for SegmentError {
             SegmentError::Curl(e) => write!(f, "{}", e),
             SegmentError::Http(code) => write!(f, "HTTP {}", code),
             SegmentError::InvalidRangeResponse(code) => {
-                write!(f, "range request got HTTP {} instead of 206 Partial Content", code)
+                write!(
+                    f,
+                    "range request got HTTP {} instead of 206 Partial Content",
+                    code
+                )
             }
             SegmentError::PartialTransfer { expected, received } => {
-                write!(f, "partial transfer: expected {} bytes, got {}", expected, received)
+                write!(
+                    f,
+                    "partial transfer: expected {} bytes, got {}",
+                    expected, received
+                )
             }
             SegmentError::Storage(e) => write!(f, "storage: {}", e),
         }

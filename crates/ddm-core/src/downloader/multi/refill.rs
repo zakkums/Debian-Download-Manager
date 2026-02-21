@@ -10,12 +10,16 @@ use std::time::{Duration, Instant};
 use crate::segmenter::Segment;
 use crate::storage::StorageWriter;
 
-use super::handler::SegmentHandler;
 use super::super::CurlOptions;
+use super::handler::SegmentHandler;
 
 /// Active entry in the multi event loop: handle + segment index + metadata.
-pub(super) type ActiveItem =
-    (curl::multi::Easy2Handle<SegmentHandler>, usize, Segment, u32);
+pub(super) type ActiveItem = (
+    curl::multi::Easy2Handle<SegmentHandler>,
+    usize,
+    Segment,
+    u32,
+);
 
 /// Returns wait time in ms until the next retry is ready, capped at 100.
 pub(super) fn next_retry_wait_ms(retry_after: &[(Instant, usize, Segment, u32)]) -> u64 {
@@ -47,7 +51,8 @@ pub(super) fn add_easy_to_multi(
         in_flight_bytes.map(Arc::clone),
     );
     let mut easy = curl::easy::Easy2::new(handler);
-    easy.url(url).map_err(|e| anyhow::anyhow!("curl url: {}", e))?;
+    easy.url(url)
+        .map_err(|e| anyhow::anyhow!("curl url: {}", e))?;
     easy.follow_location(true)
         .map_err(|e| anyhow::anyhow!("curl: {}", e))?;
     easy.max_redirections(10)
@@ -132,4 +137,3 @@ pub(super) fn refill_active(
     }
     Ok(())
 }
-

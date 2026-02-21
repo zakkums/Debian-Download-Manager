@@ -37,7 +37,10 @@ impl JobControl {
     /// Call when starting a job; the token is set to true when pause/cancel is requested.
     pub fn register(&self, job_id: i64) -> Arc<AtomicBool> {
         let token = Arc::new(AtomicBool::new(false));
-        self.jobs.write().unwrap().insert(job_id, Arc::clone(&token));
+        self.jobs
+            .write()
+            .unwrap()
+            .insert(job_id, Arc::clone(&token));
         token
     }
 
@@ -57,6 +60,8 @@ impl JobControl {
 
 /// Default path for the control socket (same XDG state dir as the DB).
 pub fn default_control_socket_path() -> std::io::Result<PathBuf> {
-    let dir = xdg::BaseDirectories::with_prefix("ddm")?.get_state_home().join("ddm");
+    let dir = xdg::BaseDirectories::with_prefix("ddm")?
+        .get_state_home()
+        .join("ddm");
     Ok(dir.join("control.sock"))
 }

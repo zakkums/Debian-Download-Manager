@@ -46,11 +46,6 @@ impl HostKey {
             .port_or_known_default()
             .ok_or_else(|| anyhow::anyhow!("URL missing port and unknown default: {url}"))?;
 
-        Ok(Self {
-            scheme,
-            host,
-            port,
-        })
+        Ok(Self { scheme, host, port })
     }
 }
-

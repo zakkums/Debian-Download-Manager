@@ -85,30 +85,30 @@ fn handle(mut stream: std::net::TcpStream, body: &[u8], opts: RangeServerOptions
         let use_range = opts.support_ranges;
         let (status, range_header, slice) = if use_range {
             if let Some((start, end_incl)) = range {
-            let start = start.min(total);
-            let end_incl = end_incl.min(total.saturating_sub(1));
-            if start > end_incl {
-                (
-                    "416 Range Not Satisfiable",
-                    format!("bytes */{}", total),
-                    &body[0..0],
-                )
+                let start = start.min(total);
+                let end_incl = end_incl.min(total.saturating_sub(1));
+                if start > end_incl {
+                    (
+                        "416 Range Not Satisfiable",
+                        format!("bytes */{}", total),
+                        &body[0..0],
+                    )
+                } else {
+                    let start = start as usize;
+                    let end_excl = (end_incl + 1).min(total) as usize;
+                    let slice = body.get(start..end_excl).unwrap_or(&body[0..0]);
+                    (
+                        "206 Partial Content",
+                        format!("bytes {}-{}/{}", start, end_excl.saturating_sub(1), total),
+                        slice,
+                    )
+                }
             } else {
-                let start = start as usize;
-                let end_excl = (end_incl + 1).min(total) as usize;
-                let slice = body.get(start..end_excl).unwrap_or(&body[0..0]);
                 (
-                    "206 Partial Content",
-                    format!("bytes {}-{}/{}", start, end_excl.saturating_sub(1), total),
-                    slice,
+                    "200 OK",
+                    format!("bytes 0-{}/{}", total.saturating_sub(1), total),
+                    body,
                 )
-            }
-            } else {
-            (
-                "200 OK",
-                format!("bytes 0-{}/{}", total.saturating_sub(1), total),
-                body,
-            )
             }
         } else {
             (
@@ -125,7 +125,10 @@ fn handle(mut stream: std::net::TcpStream, body: &[u8], opts: RangeServerOptions
         let response = format!(
             "HTTP/1.1 {}\r\nContent-Length: {}\r\nContent-Range: {}\r\n{}\
 \r\n",
-            status, slice.len(), range_header, accept_ranges
+            status,
+            slice.len(),
+            range_header,
+            accept_ranges
         );
         let _ = stream.write_all(response.as_bytes());
         let _ = stream.write_all(slice);

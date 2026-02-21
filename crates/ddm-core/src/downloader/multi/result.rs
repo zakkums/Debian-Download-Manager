@@ -3,8 +3,8 @@
 use crate::retry::SegmentError;
 use crate::segmenter::Segment;
 
-use super::handler::SegmentHandler;
 use super::super::SegmentResult;
+use super::handler::SegmentHandler;
 
 /// Build result from response code and handler bytes_written.
 pub(super) fn segment_result_from_easy(

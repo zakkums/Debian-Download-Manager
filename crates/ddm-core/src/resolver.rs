@@ -47,4 +47,3 @@ mod tests {
         assert!(spec.headers.is_empty());
     }
 }
-

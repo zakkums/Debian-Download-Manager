@@ -92,4 +92,3 @@ pub struct JobMetadata {
     pub segment_count: i64,
     pub completed_bitmap: Vec<u8>,
 }
-

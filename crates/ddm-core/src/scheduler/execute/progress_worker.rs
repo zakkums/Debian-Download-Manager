@@ -41,7 +41,9 @@ pub(super) async fn run_progress_persistence_loop(
                 .map(|(_, a)| a.load(Ordering::Relaxed))
                 .sum();
             let elapsed_secs = download_start.elapsed().as_secs_f64();
-            let segments_done = (0..segment_count_u).filter(|i| bitmap.is_completed(*i)).count();
+            let segments_done = (0..segment_count_u)
+                .filter(|i| bitmap.is_completed(*i))
+                .count();
             let stats = ProgressStats {
                 bytes_done,
                 bytes_in_flight,

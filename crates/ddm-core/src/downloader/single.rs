@@ -2,9 +2,9 @@
 //!
 //! Writes the response body sequentially to storage starting at offset 0.
 
-use anyhow::{Context, Result};
-use crate::storage::StorageWriter;
 use super::CurlOptions;
+use crate::storage::StorageWriter;
+use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::str;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -29,13 +29,16 @@ pub fn download_single(
     easy.follow_location(true)?;
     easy.max_redirections(10)?;
     if let Some(speed) = curl.max_recv_speed {
-        easy.max_recv_speed(speed).map_err(|e| anyhow::anyhow!("curl: {}", e))?;
+        easy.max_recv_speed(speed)
+            .map_err(|e| anyhow::anyhow!("curl: {}", e))?;
     }
     if let Some(sz) = curl.buffer_size {
-        easy.buffer_size(sz).map_err(|e| anyhow::anyhow!("curl: {}", e))?;
+        easy.buffer_size(sz)
+            .map_err(|e| anyhow::anyhow!("curl: {}", e))?;
     }
     easy.connect_timeout(Duration::from_secs(30))?;
-    easy.low_speed_limit(1024).map_err(|e| anyhow::anyhow!("curl: {}", e))?;
+    easy.low_speed_limit(1024)
+        .map_err(|e| anyhow::anyhow!("curl: {}", e))?;
     easy.low_speed_time(Duration::from_secs(60))?;
     easy.timeout(Duration::from_secs(3600))?;
 
@@ -81,4 +84,3 @@ pub fn download_single(
     }
     Ok(written)
 }
-

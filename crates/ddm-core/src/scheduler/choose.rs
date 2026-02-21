@@ -13,10 +13,7 @@ pub(crate) fn choose_segment_count(
     let adaptive = host_policy
         .adaptive_segment_count_for_url(url)
         .unwrap_or_else(|_| cfg.min_segments.max(1).min(cfg.max_segments));
-    let n = adaptive
-        .max(cfg.min_segments)
-        .min(cfg.max_segments)
-        .max(1);
+    let n = adaptive.max(cfg.min_segments).min(cfg.max_segments).max(1);
     if total_size == 0 {
         return n;
     }

@@ -47,8 +47,7 @@ pub fn probe(url: &str, custom_headers: &HashMap<String, String>) -> Result<Head
     let mut headers: Vec<String> = Vec::new();
 
     let mut easy = curl::easy::Easy::new();
-    easy.url(url)
-        .context("invalid URL")?;
+    easy.url(url).context("invalid URL")?;
     easy.nobody(true)?; // HEAD request
     easy.follow_location(true)?;
     easy.max_redirections(10)?;
@@ -157,7 +156,10 @@ pub fn probe_range0(url: &str, custom_headers: &HashMap<String, String>) -> Resu
 /// - If HEAD fails, falls back to `probe_range0`.
 /// - If HEAD succeeds but doesn't provide enough info (no ranges or no length),
 ///   also tries `probe_range0` and merges the results.
-pub fn probe_best_effort(url: &str, custom_headers: &HashMap<String, String>) -> Result<HeadResult> {
+pub fn probe_best_effort(
+    url: &str,
+    custom_headers: &HashMap<String, String>,
+) -> Result<HeadResult> {
     let head = probe(url, custom_headers);
     match head {
         Ok(mut r) => {

@@ -93,11 +93,13 @@ mod tests {
 
     #[test]
     fn parse_headers_content_disposition() {
-        let lines = [
-            "Content-Disposition: attachment; filename=\"report.pdf\"".to_string(),
-        ];
+        let lines = ["Content-Disposition: attachment; filename=\"report.pdf\"".to_string()];
         let r = parse_headers(&lines).unwrap();
         assert!(r.content_disposition.is_some());
-        assert!(r.content_disposition.as_deref().unwrap().contains("report.pdf"));
+        assert!(r
+            .content_disposition
+            .as_deref()
+            .unwrap()
+            .contains("report.pdf"));
     }
 }

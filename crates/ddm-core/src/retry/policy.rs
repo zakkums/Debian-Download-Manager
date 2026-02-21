@@ -122,10 +122,6 @@ mod tests {
             p.decide(2, ErrorKind::Throttled),
             RetryDecision::RetryAfter(_)
         ));
-        assert_eq!(
-            p.decide(3, ErrorKind::Throttled),
-            RetryDecision::NoRetry
-        );
+        assert_eq!(p.decide(3, ErrorKind::Throttled), RetryDecision::NoRetry);
     }
 }
-
